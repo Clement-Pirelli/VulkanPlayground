@@ -48,6 +48,25 @@ namespace vkut {
 	VkRenderPass createRenderPass(VkDevice device, const std::vector<VkAttachmentDescription> &colorDescriptions, std::optional<VkAttachmentDescription> depthDescription = {}, std::optional<size_t> resolveAttachment = {});
 	void destroyRenderPass(VkDevice device, VkRenderPass renderPass);
 
+	struct PipelineInfo
+	{
+		VkDevice device;
+		VkRenderPass pass;
+		std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+		VkPipelineVertexInputStateCreateInfo vertexInputInfo;
+		VkPipelineInputAssemblyStateCreateInfo inputAssembly;
+		VkViewport viewport;
+		VkRect2D scissor;
+		VkPipelineRasterizationStateCreateInfo rasterizer;
+		VkPipelineColorBlendAttachmentState colorBlendAttachment;
+		VkPipelineDepthStencilStateCreateInfo depth;
+		VkPipelineMultisampleStateCreateInfo multisampling;
+		VkPipelineLayout pipelineLayout;
+	};
+
+	VkPipeline createPipeline(const PipelineInfo& pipelineInfo);
+	void destroyPipeline(VkDevice device, VkPipeline pipeline);
+
 	[[nodiscard]]
 	VkPipelineLayout createPipelineLayout(VkDevice device, const std::vector<VkDescriptorSetLayout> &descriptorSetLayouts, const std::vector<VkPushConstantRange> &pushConstantRanges);
 	void destroyPipelineLayout(VkDevice device, VkPipelineLayout pipelineLayout);
@@ -95,43 +114,6 @@ namespace vkut {
 	[[nodiscard]]
 	VkFramebuffer createRenderPassFramebuffer(const CreateRenderPassFramebufferInfo& info);
 	void destroyFramebuffer(VkDevice device, VkFramebuffer framebuffer);
-
-
-	struct CreateBufferInfo
-	{
-		VkDevice device{};
-		VkPhysicalDevice physicalDevice{};
-		VkDeviceSize size{};
-		VkBufferUsageFlags usage{};
-		VkMemoryPropertyFlags propertyFlags{};
-		VkMemoryAllocateFlagsInfo flagsInfo{};
-	};
-
-	[[nodiscard]]
-	Buffer createBuffer(const CreateBufferInfo &info);
-	void destroyBuffer(VkDevice device, const Buffer &buffer);
-
-	template<typename T>
-	void copyScalarToBuffer(VkDevice device, const Buffer &buffer, const T &data)
-	{
-		void *dataPtr = (void *)&data;
-		size_t size = sizeof(T);
-		void *mappedData;
-		vkMapMemory(device, buffer.memory, 0, size, 0, &mappedData);
-		memcpy(mappedData, dataPtr, size);
-		vkUnmapMemory(device, buffer.memory);
-	}
-
-	template<typename T>
-	void copyVectorToBuffer(VkDevice device, const Buffer &buffer, const std::vector<T> &data)
-	{
-		void *dataPtr = (void *)(data.data());
-		size_t size = sizeof(T) * data.size();
-		void *mappedData;
-		vkMapMemory(device, buffer.memory, 0, size, 0, &mappedData);
-		memcpy(mappedData, dataPtr, size);
-		vkUnmapMemory(device, buffer.memory);
-	}
 
 	[[nodiscard]]
 	std::optional<VkShaderModule> createShaderModule(VkDevice device, const char *path);

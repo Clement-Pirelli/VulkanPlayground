@@ -154,6 +154,7 @@
     <ClInclude Include="..\Dependencies\include\Files.h" />
     <ClInclude Include="..\Dependencies\include\Logger\Logger.h" />
     <ClInclude Include="AttributeType.h" />
+    <ClInclude Include="Mesh.h" />
     <ClInclude Include="OFileSerialization.h" />
     <ClInclude Include="Time.h" />
     <ClInclude Include="VkBootstrap.h" />
@@ -163,6 +164,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Dependencies\include\Logger\Logger.cpp" />
+    <ClCompile Include="Mesh.cpp" />
     <ClCompile Include="OFileSerialization.cpp" />
     <ClCompile Include="Time.cpp" />
     <ClCompile Include="VkBootstrap.cpp" />

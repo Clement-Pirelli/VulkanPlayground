@@ -158,52 +158,6 @@ namespace vkut {
 		Logger::logTrivialFormatted("Destroyed shader module %u!", shaderModule);
 	}
 
-
-	Buffer createBuffer(const CreateBufferInfo &info)
-	{
-		Buffer buffer
-		{
-			.size = info.size
-		};
-
-		const VkBufferCreateInfo bufferInfo
-		{
-			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-			.size = info.size,
-			.usage = info.usage,
-			.sharingMode = VK_SHARING_MODE_EXCLUSIVE
-		};
-
-		VK_CHECK(vkCreateBuffer(info.device, &bufferInfo, nullptr, &buffer.buffer));
-		Logger::logTrivialFormatted("Created buffer %u! ", buffer);
-
-		VkMemoryRequirements memRequirements = {};
-		vkGetBufferMemoryRequirements(info.device, buffer.buffer, &memRequirements);
-
-		const VkMemoryAllocateInfo allocInfo
-		{
-			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-			.pNext = info.flagsInfo.sType == VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO ? &info.flagsInfo : nullptr,
-			.allocationSize = memRequirements.size,
-			.memoryTypeIndex = findMemoryType(info.physicalDevice, memRequirements.memoryTypeBits, info.propertyFlags)
-		};
-
-		VK_CHECK(vkAllocateMemory(info.device, &allocInfo, nullptr, &buffer.memory));
-		Logger::logTrivialFormatted("Allocated buffer memory %u! ", buffer.memory);
-
-		VK_CHECK(vkBindBufferMemory(info.device, buffer.buffer, buffer.memory, 0));
-
-		return buffer;
-	}
-
-	void destroyBuffer(VkDevice device, const Buffer &buffer)
-	{
-		vkDestroyBuffer(device, buffer.buffer, nullptr);
-		vkFreeMemory(device, buffer.memory, nullptr);
-		Logger::logTrivialFormatted("Destroyed buffer %u! ", buffer.buffer);
-		Logger::logTrivialFormatted("Freed buffer memory %u! ", buffer.memory);
-	}
-
 	VkFramebuffer createRenderPassFramebuffer(const CreateRenderPassFramebufferInfo &info)
 	{
 		assert(info.colorViews.size() != 0);
@@ -415,7 +369,68 @@ namespace vkut {
 	}
 
 
+	VkPipeline createPipeline(const PipelineInfo &pipelineInfo)
+	{
+		const VkPipelineViewportStateCreateInfo viewportState
+		{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+			.viewportCount = 1,
+			.pViewports = &pipelineInfo.viewport,
+			.scissorCount = 1,
+			.pScissors = &pipelineInfo.scissor,
+
+		};
+
+		//setup dummy color blending. We arent using transparent objects yet
+		//the blending is just "no blend", but we do write to the color attachment
+		const VkPipelineColorBlendStateCreateInfo colorBlending
+		{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+			.logicOpEnable = VK_FALSE,
+			.logicOp = VK_LOGIC_OP_COPY,
+			.attachmentCount = 1,
+			.pAttachments = &pipelineInfo.colorBlendAttachment,
+		};
+
+		VkGraphicsPipelineCreateInfo pipelineCreateInfo
+		{
+			.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+			.stageCount = (uint32_t)pipelineInfo.shaderStages.size(),
+			.pStages = pipelineInfo.shaderStages.data(),
+			.pVertexInputState = &pipelineInfo.vertexInputInfo,
+			.pInputAssemblyState = &pipelineInfo.inputAssembly,
+			.pViewportState = &viewportState,
+			.pRasterizationState = &pipelineInfo.rasterizer,
+			.pMultisampleState = &pipelineInfo.multisampling,
+			.pDepthStencilState = &pipelineInfo.depth,
+			.pColorBlendState = &colorBlending,
+			.layout = pipelineInfo.pipelineLayout,
+			.renderPass = pipelineInfo.pass,
+			.subpass = 0,
+		};
+
+		//its easy to error out on create graphics pipeline, so we handle it a bit better than the common VK_CHECK case
+		VkPipeline pipeline;
+		if (vkCreateGraphicsPipelines(
+			pipelineInfo.device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline) != VK_SUCCESS) {
+			Logger::logError("Failed to create pipeline");
+			return VK_NULL_HANDLE;
+		}
+		else
+		{
+			Logger::logMessageFormatted("Created pipeline %u!", pipeline);
+			return pipeline;
+		}
+	}
+
+	void destroyPipeline(VkDevice device, VkPipeline pipeline)
+	{
+		vkDestroyPipeline(device, pipeline, nullptr);
+		Logger::logMessageFormatted("Destroyed pipeline %u!", pipeline);
+	}
+
 	VkPipelineLayout createPipelineLayout(
+
 		VkDevice device,
 		const std::vector<VkDescriptorSetLayout> &descriptorSetLayouts,
 		const std::vector<VkPushConstantRange> &pushConstantRanges)

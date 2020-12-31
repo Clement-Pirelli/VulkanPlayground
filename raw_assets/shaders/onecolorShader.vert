@@ -1,7 +1,5 @@
 #version 450
 
-layout (location = 0) out vec3 outColor;
-
 void main() 
 {
 	const vec3 positions[3] = vec3[3](
@@ -11,7 +9,4 @@ void main()
 	);
 
 	gl_Position = vec4(positions[gl_VertexIndex], 1.0f);
-	vec3 color = vec3(.0);
-	color[gl_VertexIndex] = 1.0f;
-	outColor = color;
 }

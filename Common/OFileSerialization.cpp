@@ -6,12 +6,16 @@
 
 #define WRITER_CHECK(expr) if(!(expr)) return false;
 
-OFile OFile::load(const char* path)
+std::optional<OFile> OFile::load(const char* path)
 {
 	OFile file;
 	OFile::FileData &fileData = file.fileData;
 
 	FileReader reader(path);
+	if(reader.failed())
+	{
+		return std::nullopt;
+	}
 	std::vector<uint8_t> data = std::vector<uint8_t>(reader.calculateLength());
 	reader.read((char *)data.data(), data.size());
 

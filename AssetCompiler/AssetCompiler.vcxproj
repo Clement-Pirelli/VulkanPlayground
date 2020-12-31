@@ -184,16 +184,16 @@ for %%g in (*.obj) do "$(SolutionDir)AssetCompiler\build\AssetCompiler.exe" -src
     <UpToDateCheckInput Include="raw_assets\models\*.obj" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\raw_assets\shader.frag" />
-    <None Include="..\raw_assets\shader.vert" />
-  </ItemGroup>
-  <ItemGroup>
     <ProjectReference Include="..\Common\Common.vcxproj">
       <Project>{665d49e8-0647-415f-bc1e-127ca72b8e73}</Project>
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\raw_assets\shaders\shader.frag" />
+    <None Include="..\raw_assets\shaders\shader.vert" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

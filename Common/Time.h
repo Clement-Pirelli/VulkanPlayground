@@ -3,22 +3,22 @@
 class Time
 {
 public:
-	struct milliseconds
+	struct nanoseconds
 	{
-		long long amount = 0;
+		long long amount = {};
 	};
 
-	Time(milliseconds originalAmount = { 0 });
+	Time(nanoseconds originalAmount = {0});
 
-	static milliseconds milliseconds_since_epoch();
+	static nanoseconds nanosecondsSinceEpoch();
 
-	static float seconds_since_epoch();
+	static float secondsSinceEpoch();
 
 	static Time now();
 
+	long long asWholeSeconds() const;
+	long long asWholeMilliseconds() const;
 	float asSeconds() const;
-
-	milliseconds asMilliseconds() const;
 
 	[[nodiscard]]
 	Time operator-(const Time &other) const;
@@ -34,5 +34,5 @@ public:
 
 private:
 
-	milliseconds ticks = {};
+	nanoseconds ticks = { 0 };
 };

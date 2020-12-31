@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include "AttributeType.h"
+#include <optional>
 
 class OFile
 {
@@ -16,7 +17,7 @@ public:
 		std::vector<uint32_t> indices = {};
 	};
 
-	static OFile load(const char* path);
+	static std::optional<OFile> load(const char* path);
 	static bool save(const char* path, const FileData &data);
 
 	[[nodiscard]]
