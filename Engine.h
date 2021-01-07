@@ -9,6 +9,7 @@
 #include <mat.h>
 #include <vec.h>
 #include <Time.h>
+#include <unordered_map>
 
 struct GLFWwindow;
 
@@ -27,6 +28,66 @@ struct DeletionQueue
 	}
 private:
 	std::deque<std::function<void()>> deletors;
+};
+
+struct Material 
+{
+	VkPipeline pipeline;
+	VkPipelineLayout pipelineLayout;
+};
+
+template<typename ID>
+struct EngineResourceHandle
+{
+	constexpr EngineResourceHandle() = default;
+	static constexpr EngineResourceHandle<ID> invalidHandle() { return EngineResourceHandle<ID>{~0U}; };
+	bool operator!=(EngineResourceHandle<ID> h) const
+	{
+		return h.handle != handle;
+	}
+	bool operator==(EngineResourceHandle<ID> h) const
+	{
+		return h.handle == handle;
+	}
+
+	auto operator<=>(EngineResourceHandle<ID> h) const
+	{
+		return h.handle <=> handle;
+	}
+private:
+
+	static uint64_t nextHandle;
+	explicit constexpr EngineResourceHandle(uint64_t givenHandle) : handle(givenHandle) {}	
+	
+	uint64_t handle{};
+
+	friend struct std::hash<EngineResourceHandle<ID>>;
+	friend class Engine;
+};
+
+template<typename ID>
+uint64_t EngineResourceHandle<ID>::nextHandle = { 1 };
+
+namespace std
+{
+	template<typename ID> 
+	struct hash<EngineResourceHandle<ID>>
+	{
+		size_t operator()(EngineResourceHandle<ID> handle) const
+		{
+			//handles are unique, so hashing would be a waste of time
+			return (size_t)handle.handle;
+		}
+	};
+}
+using MeshHandle = EngineResourceHandle<struct MeshID>;
+using MaterialHandle = EngineResourceHandle<struct MaterialID>;
+
+struct RenderObject
+{
+	Mesh* mesh;
+	Material* material;
+	mat4x4 transform;
 };
 
 class Engine
@@ -75,17 +136,31 @@ public:
 	VkSemaphore renderSemaphore{};
 	VkFence renderFence{};
 
-	VkPipelineLayout trianglePipelineLayout{};
-
-	Mesh dragonMesh;
-	VkPipeline meshPipeline{};
-
 	VkImageView depthImageView{};
 	AllocatedImage depthImage{};
 	VkFormat depthFormat{};
 
 	DeletionQueue mainDeletionQueue{};
 
+	std::vector<RenderObject> renderables;
+	std::unordered_map<MaterialHandle, Material> materials;
+	std::unordered_map<MeshHandle, Mesh> meshes;
+
+	[[nodiscard]]
+	MaterialHandle createMaterial(const char *vertexModulePath, const char *fragmentModulePath, MeshHandle vertexDescriptionMesh);
+	[[nodiscard]]
+	MaterialHandle createMaterial(VkPipeline pipeline, VkPipelineLayout layout);
+	[[nodiscard]]
+	MeshHandle loadMesh(const char *path);
+	
+	[[nodiscard]]
+	Material* getMaterial(MaterialHandle handle);
+	[[nodiscard]]
+	Mesh *getMesh(MeshHandle handle);
+	
+	void addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform);
+
+	void drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count);
 
 	Engine();
 	~Engine();
@@ -97,7 +172,6 @@ private:
 	void initDefaultRenderpass();
 	void initFramebuffers();
 	void initSyncPrimitives();
-	void initPipeline();
 	void initDepthResources();
 
 	bool initialized = false;
@@ -105,6 +179,5 @@ private:
 
 	VmaAllocator allocator{};
 
-	void loadMeshes();
 	void uploadMesh(Mesh &mesh);
 };

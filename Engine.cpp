@@ -84,9 +84,6 @@ namespace
 void Engine::run()
 {
     Time endTime = Time::now();
-
-    float accTime = .0f;
-
     do 
     {
         glfwPollEvents();
@@ -94,14 +91,94 @@ void Engine::run()
         draw(deltaTime);
         endTime = Time::now();
 
-        accTime += deltaTime.asWholeSeconds();
-        if(accTime >= 1.0f)
+    } while (!glfwWindowShouldClose(window));
+}
+
+MaterialHandle Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout)
+{
+    const MaterialHandle newHandle = MaterialHandle{ MaterialHandle::nextHandle };
+    MaterialHandle::nextHandle++;
+    materials[newHandle] = Material
+    {
+        .pipeline = pipeline,
+        .pipelineLayout = layout
+    };
+    return newHandle;
+}
+
+Material *Engine::getMaterial(MaterialHandle handle)
+{
+    if (auto it = materials.find(handle);
+        it != materials.end()) 
+    {
+        return &(*it).second;
+    }
+    else {
+        return nullptr;
+    }
+}
+
+Mesh *Engine::getMesh(MeshHandle handle)
+{
+    if (auto it = meshes.find(handle);
+        it != meshes.end())
+    {
+        return &(*it).second;
+    }
+    else {
+        return nullptr;
+    }
+}
+
+void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count)
+{
+    const vec3 camPos = { 0.0f,-6.f,-10.0f };
+    const mat4x4 viewMatrix = mat4x4::translate(camPos);
+    const mat4x4::PerspectiveProjection perspectiveProjection
+    {
+        .fovX = 70.0f * degToRad,
+        .aspectRatio = (float)(windowExtent.width / windowExtent.height),
+        .zfar = 200.0f,
+        .znear = .01f,
+    }; 
+    mat4x4 projectionMatrix = mat4x4::perspective(perspectiveProjection);
+    projectionMatrix.at(1, 1) *= -1.0f;
+
+    Mesh* lastMesh = nullptr;
+    Material* lastMaterial = nullptr;
+    for (int i = 0; i < count; i++)
+    {
+        const RenderObject& object = first[i];
+
+        //only bind the pipeline if it doesnt match with the already bound one
+        if (object.material != lastMaterial) 
         {
-            Logger::logTrivialFormatted("One second has passed! Time is now %f!", Time::now());
-            accTime = .0f;
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline);
+            lastMaterial = object.material;
         }
 
-    } while (!glfwWindowShouldClose(window));
+
+        const mat4x4 modelMatrix = object.transform;
+        const mat4x4 meshMatrix = projectionMatrix * viewMatrix * modelMatrix;
+
+        const MeshPushConstants constants
+        {
+            .renderMatrix = meshMatrix
+        };
+
+        //upload the mesh to the gpu via pushconstants
+        vkCmdPushConstants(cmd, object.material->pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshPushConstants), &constants);
+
+        //only bind the mesh if its a different one from last bind
+        if (object.mesh != lastMesh) {
+            const VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &object.mesh->vertexBuffer.buffer, &offset);
+            vkCmdBindIndexBuffer(mainCommandBuffer, object.mesh->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+            lastMesh = object.mesh;
+        }
+        const VkDeviceSize offset = 0;
+        vkCmdDrawIndexed(mainCommandBuffer, (uint32_t)object.mesh->data.indices().size(), 1, 0, 0, 0);
+    }
 }
 
 Engine::Engine()
@@ -120,11 +197,7 @@ Engine::Engine()
     initDefaultRenderpass();
     initFramebuffers();
     initSyncPrimitives();
-    loadMeshes();
-    initPipeline();
-
     Logger::logMessage("Successfully initialized vulkan resources!");
-
 
     initialized = true;
 }
@@ -195,34 +268,7 @@ void Engine::draw(Time deltaTime)
 
         vkCmdBeginRenderPass(mainCommandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
         {
-            const vec3 camPos = { 0.f,0.f,-2.0f };
-            const mat4x4 viewMatrix = mat4x4::translate(camPos);
-            const mat4x4::PerspectiveProjection perspectiveProjection
-            {
-                .fovX = 70.0f * degToRad,
-                .aspectRatio = (float)(windowExtent.width / windowExtent.height),
-                .zfar = 200.0f,
-                .znear = .01f,
-            };
-
-            mat4x4 projectionMatrix = mat4x4::perspective(perspectiveProjection);
-            projectionMatrix.at(1,1) *= -1.0f;
-
-            const mat4x4 modelMatrix = mat4x4::rotatedY(Time::now().asSeconds());
-            const mat4x4 meshMatrix = projectionMatrix * viewMatrix * modelMatrix;
-
-            const MeshPushConstants constants
-            {
-                .renderMatrix = meshMatrix
-            };
-
-            vkCmdPushConstants(mainCommandBuffer, trianglePipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshPushConstants), &constants);
-
-            vkCmdBindPipeline(mainCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipeline);
-            const VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(mainCommandBuffer, 0, 1, &dragonMesh.vertexBuffer.buffer, &offset);
-            vkCmdBindIndexBuffer(mainCommandBuffer, dragonMesh.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(mainCommandBuffer, (uint32_t)dragonMesh.data.indices().size(), 1, 0, 0, 0);
+            drawObjects(mainCommandBuffer, renderables.data(), renderables.size());
         }
         vkCmdEndRenderPass(mainCommandBuffer);
     }
@@ -431,24 +477,22 @@ void Engine::initSyncPrimitives()
     QUEUE_DESTROY(vkDestroySemaphore(device, renderSemaphore, nullptr));
 }
 
-void Engine::initPipeline()
+MaterialHandle Engine::createMaterial(const char *vertexModulePath, const char *fragmentModulePath, MeshHandle vertexDescriptionMesh)
 {
-    std::optional<VkShaderModule> colorVertexModule = vkut::createShaderModule(device, "_assets/shaders/tri_mesh.vert.spv");
-    std::optional<VkShaderModule> colorFragmentModule = vkut::createShaderModule(device, "_assets/shaders/shader.frag.spv");
-
-    if(!colorVertexModule.has_value())
+    std::optional<VkShaderModule> vertexModule = vkut::createShaderModule(device, vertexModulePath);
+    std::optional<VkShaderModule> fragmentModule = vkut::createShaderModule(device, fragmentModulePath);
+    if (!vertexModule.has_value())
     {
-        Logger::logError("Could not load vertex module!");
-        return;
+        Logger::logErrorFormatted("Could not load vertex module at path: %s", vertexModulePath);
+        return MaterialHandle::invalidHandle();
     }
 
-    if(!colorFragmentModule.has_value())
+    if (!fragmentModule.has_value())
     {
-        vkut::destroyShaderModule(device, colorVertexModule.value());
-        Logger::logError("Could not load fragment module!");
-        return;
+        Logger::logErrorFormatted("Could not load fragment module at path: %s", fragmentModulePath);
+        vkut::destroyShaderModule(device, vertexModule.value());
+        return MaterialHandle::invalidHandle();
     }
-
 
     const VkPushConstantRange meshConstants
     {
@@ -456,19 +500,19 @@ void Engine::initPipeline()
         .offset = 0,
         .size = sizeof(MeshPushConstants),
     };
-    trianglePipelineLayout = vkut::createPipelineLayout(device, {}, { meshConstants });
-    QUEUE_DESTROY(vkut::destroyPipelineLayout(device, trianglePipelineLayout));
+    const VkPipelineLayout pipelineLayout = vkut::createPipelineLayout(device, {}, { meshConstants });
+    QUEUE_DESTROY(vkut::destroyPipelineLayout(device, pipelineLayout));
 
-    const VertexInputDescription vertexInputDescription = dragonMesh.getDescription();
+    const VertexInputDescription vertexInputDescription = meshes[vertexDescriptionMesh].getDescription();
 
-    vkut::PipelineInfo pipelineInfo
+    const vkut::PipelineInfo pipelineInfo
     {
         .device = device,
         .pass = renderPass,
         .shaderStages
         {
-            vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, colorVertexModule.value()),
-            vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, colorFragmentModule.value())
+            vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, vertexModule.value()),
+            vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, fragmentModule.value())
         },
         .vertexInputInfo
         {
@@ -497,14 +541,16 @@ void Engine::initPipeline()
         .colorBlendAttachment = vkinit::colorBlendAttachmentState(),
         .depth = vkinit::depthStencilCreateInfo(true, true, VK_COMPARE_OP_LESS_OR_EQUAL),
         .multisampling = vkinit::multisamplingCreateInfo(),
-        .pipelineLayout = trianglePipelineLayout,
+        .pipelineLayout = pipelineLayout,
     };
 
-    meshPipeline = vkut::createPipeline(pipelineInfo);
-    QUEUE_DESTROY(vkut::destroyPipeline(device, meshPipeline));
+    const VkPipeline pipeline = vkut::createPipeline(pipelineInfo);
+    QUEUE_DESTROY(vkut::destroyPipeline(device, pipeline));
 
-    vkut::destroyShaderModule(device, colorVertexModule.value());
-    vkut::destroyShaderModule(device, colorFragmentModule.value());
+    vkut::destroyShaderModule(device, vertexModule.value());
+    vkut::destroyShaderModule(device, fragmentModule.value());
+
+    return createMaterial(pipeline, pipelineLayout);
 }
 
 void Engine::initDepthResources()
@@ -537,18 +583,47 @@ void Engine::initDepthResources()
     QUEUE_DESTROY(vkDestroyImageView(device, depthImageView, nullptr));
 }
 
-void Engine::loadMeshes()
+MeshHandle Engine::loadMesh(const char *path)
 {
-    constexpr const char *path = "_assets/models/suzanne.o";
     auto loadResult = Mesh::load(path);
-    if(loadResult.has_value())
+    if (loadResult.has_value())
     {
-        dragonMesh = std::move(loadResult.value());
-    } else 
+        const MeshHandle handle = MeshHandle{ MeshHandle::nextHandle };
+        MeshHandle::nextHandle++;
+
+        meshes[handle] = std::move(loadResult.value());
+        uploadMesh(meshes[handle]);
+        return handle;
+    }
+    else
     {
         Logger::logErrorFormatted("Couldn't load mesh at path %s!", path);
+        return MeshHandle::invalidHandle();
     }
-    uploadMesh(dragonMesh);
+}
+
+void Engine::addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform)
+{
+    RenderObject object = 
+    {
+        .mesh = &meshes[mesh],
+        .material = &materials[material],
+        .transform = transform
+    };
+
+    auto pipelineLowerBound = std::lower_bound(renderables.begin(), renderables.end(), object.material->pipeline, [](const RenderObject &ob, VkPipeline pipeline) { return ob.material->pipeline < pipeline; });
+    auto meshStart = std::find_if(pipelineLowerBound, renderables.end(), [&object](const RenderObject& ob)
+        {
+            return object.material->pipeline == ob.material->pipeline && object.mesh == ob.mesh;
+        });
+
+    if(meshStart != renderables.end())
+    {
+        renderables.insert(meshStart, std::move(object));
+    } else 
+    {
+        renderables.insert(pipelineLowerBound, std::move(object));
+    }
 }
 
 void Engine::uploadMesh(Mesh &mesh)
