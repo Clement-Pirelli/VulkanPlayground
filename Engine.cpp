@@ -7,9 +7,8 @@
 #include "Logger/Logger.h"
 #include "OFileSerialization.h"
 #include <array>
+#include <MathUtils.h>
 
-constexpr float degToRad = 3.14f / 180.0f;
-constexpr float radToDeg = 180.0f / 3.14f;
 
 #define VKB_CHECK(result, msg) if(!result) {Logger::logErrorFormatted("%s. Cause: %s", msg, result.error().message().c_str()); return; }
 
@@ -54,7 +53,7 @@ namespace
         vkDestroySurfaceKHR(instance, surface, nullptr);
     }
 
-    std::optional<Engine::SwapchainInfo> createSwapchainInfo(VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface)
+    std::optional<SwapchainInfo> createSwapchainInfo(VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface)
     {
         vkb::SwapchainBuilder swapchainBuilder(physicalDevice, device, surface);
         auto swapchainResult = swapchainBuilder
@@ -70,7 +69,7 @@ namespace
 
         return 
         {
-            Engine::SwapchainInfo
+            SwapchainInfo
             {
                 .swapchain = vkbSwapchain.swapchain,
                 .format = vkbSwapchain.image_format,
@@ -79,19 +78,6 @@ namespace
             }
         };
     }
-}
-
-void Engine::run()
-{
-    Time endTime = Time::now();
-    do 
-    {
-        glfwPollEvents();
-        Time deltaTime = Time::now() - endTime;
-        draw(deltaTime);
-        endTime = Time::now();
-
-    } while (!glfwWindowShouldClose(window));
 }
 
 MaterialHandle Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout)
@@ -130,13 +116,18 @@ Mesh *Engine::getMesh(MeshHandle handle)
     }
 }
 
+GLFWwindow *Engine::getWindow() const
+{
+    return window;
+}
+
 void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count)
 {
-    const vec3 camPos = { 0.0f,-6.f,-10.0f };
-    const mat4x4 viewMatrix = mat4x4::translate(camPos);
+    const mat4x4 viewMatrix = camera.calculateViewMatrix();
+    
     const mat4x4::PerspectiveProjection perspectiveProjection
     {
-        .fovX = 70.0f * degToRad,
+        .fovX = math::degToRad(70.0f),
         .aspectRatio = (float)(windowExtent.width / windowExtent.height),
         .zfar = 200.0f,
         .znear = .01f,
@@ -173,15 +164,20 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count)
         if (object.mesh != lastMesh) {
             const VkDeviceSize offset = 0;
             vkCmdBindVertexBuffers(cmd, 0, 1, &object.mesh->vertexBuffer.buffer, &offset);
-            vkCmdBindIndexBuffer(mainCommandBuffer, object.mesh->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdBindIndexBuffer(cmd, object.mesh->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             lastMesh = object.mesh;
         }
         const VkDeviceSize offset = 0;
-        vkCmdDrawIndexed(mainCommandBuffer, (uint32_t)object.mesh->data.indices().size(), 1, 0, 0, 0);
+        vkCmdDrawIndexed(cmd, (uint32_t)object.mesh->data.indices().size(), 1, 0, 0, 0);
     }
 }
 
-Engine::Engine()
+bool Engine::shouldQuit() const
+{
+    return glfwWindowShouldClose(window);
+}
+
+Engine::Engine(Camera givenCamera, VkExtent2D givenWindowExtent) : camera(givenCamera), windowExtent(givenWindowExtent)
 {
     initVulkan();
 
@@ -217,15 +213,17 @@ void Engine::draw(Time deltaTime)
 {
     constexpr bool waitAll = true;
     constexpr uint64_t oneSecondTimeoutInNS = 1000000000;
-    VK_CHECK(vkWaitForFences(device, 1, &renderFence, waitAll, oneSecondTimeoutInNS));
-    VK_CHECK(vkResetFences(device, 1, &renderFence));
+    FrameData &frame = currentFrame();
+
+    VK_CHECK(vkWaitForFences(device, 1, &frame.renderFence, waitAll, oneSecondTimeoutInNS));
+    VK_CHECK(vkResetFences(device, 1, &frame.renderFence));
 
     //note we give presentSemaphore to the swapchain, it'll be signaled when the swapchain is ready to give the next image
     uint32_t swapchainImageIndex;
-    VK_CHECK(vkAcquireNextImageKHR(device, swapchainInfo.swapchain, oneSecondTimeoutInNS, presentSemaphore, nullptr, &swapchainImageIndex));
+    VK_CHECK(vkAcquireNextImageKHR(device, swapchainInfo.swapchain, oneSecondTimeoutInNS, frame.presentSemaphore, nullptr, &swapchainImageIndex));
 
     //begin recording the command buffer after resetting it safely (it isn't being used anymore since we acquired the next image)
-    VK_CHECK(vkResetCommandBuffer(mainCommandBuffer, 0));
+    VK_CHECK(vkResetCommandBuffer(frame.mainCommandBuffer, 0));
 
     VkCommandBufferBeginInfo commandBufferBeginInfo
     {
@@ -233,7 +231,7 @@ void Engine::draw(Time deltaTime)
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, //we rerecord every frame, so this is a one time submit
     };
 
-    VK_CHECK(vkBeginCommandBuffer(mainCommandBuffer, &commandBufferBeginInfo));
+    VK_CHECK(vkBeginCommandBuffer(frame.mainCommandBuffer, &commandBufferBeginInfo));
     {
         const float flash = (float)abs(sin(frameCount / 120.f));
 
@@ -266,13 +264,13 @@ void Engine::draw(Time deltaTime)
 
         };
 
-        vkCmdBeginRenderPass(mainCommandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(frame.mainCommandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
         {
-            drawObjects(mainCommandBuffer, renderables.data(), renderables.size());
+            drawObjects(frame.mainCommandBuffer, renderables.data(), renderables.size());
         }
-        vkCmdEndRenderPass(mainCommandBuffer);
+        vkCmdEndRenderPass(frame.mainCommandBuffer);
     }
-    VK_CHECK(vkEndCommandBuffer(mainCommandBuffer));
+    VK_CHECK(vkEndCommandBuffer(frame.mainCommandBuffer));
     
 
     const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -280,23 +278,23 @@ void Engine::draw(Time deltaTime)
     {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &presentSemaphore, //we wait on the presentSemaphore so the swapchain is ready
+        .pWaitSemaphores = &frame.presentSemaphore, //we wait on the presentSemaphore so the swapchain is ready
         .pWaitDstStageMask = &waitStage,
         .commandBufferCount = 1,
-        .pCommandBuffers = &mainCommandBuffer,
+        .pCommandBuffers = &frame.mainCommandBuffer,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &renderSemaphore, //we lock the renderSemaphore for the duration of rendering
+        .pSignalSemaphores = &frame.renderSemaphore, //we lock the renderSemaphore for the duration of rendering
     };
 
     //commands will be executed, renderFence will block until the commands on the graphicsQueue finish execution
-    VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submit, renderFence));
+    VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submit, frame.renderFence));
 
 
     VkPresentInfoKHR presentInfo 
     {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &renderSemaphore, //wait on rendering to be done before we present
+        .pWaitSemaphores = &frame.renderSemaphore, //wait on rendering to be done before we present
         .swapchainCount = 1,
         .pSwapchains = &swapchainInfo.swapchain,
         .pImageIndices = &swapchainImageIndex
@@ -389,18 +387,22 @@ void Engine::initCommands()
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, //we should be able to reset command buffers
         .queueFamilyIndex = graphicsQueueFamily,
     };
-    VK_CHECK(vkCreateCommandPool(device, &commandPoolInfo, nullptr, &commandPool));
-    QUEUE_DESTROY(vkDestroyCommandPool(device, commandPool, nullptr));
-
-    //allocate the default command buffer that we will use for rendering
-    const VkCommandBufferAllocateInfo commandBufferAllocationInfo
+    for (FrameData &frame : frames) 
     {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = commandPool,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
-    };
-    VK_CHECK(vkAllocateCommandBuffers(device, &commandBufferAllocationInfo, &mainCommandBuffer));
+        VK_CHECK(vkCreateCommandPool(device, &commandPoolInfo, nullptr, &frame.commandPool));
+        QUEUE_DESTROY(vkDestroyCommandPool(device, frame.commandPool, nullptr));
+
+        //allocate the default command buffer that we will use for rendering
+        const VkCommandBufferAllocateInfo commandBufferAllocationInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = frame.commandPool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        VK_CHECK(vkAllocateCommandBuffers(device, &commandBufferAllocationInfo, &frame.mainCommandBuffer));
+    }
+  
 }
 
 void Engine::initDefaultRenderpass()
@@ -463,18 +465,22 @@ void Engine::initSyncPrimitives()
         .flags = VK_FENCE_CREATE_SIGNALED_BIT //on creation, will be in signaled state
     };
 
-    VK_CHECK(vkCreateFence(device, &fenceCreateInfo, nullptr, &renderFence));
-    QUEUE_DESTROY(vkDestroyFence(device, renderFence, nullptr));
-
     const VkSemaphoreCreateInfo semaphoreCreateInfo
     {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
         //no flags
     };
-    VK_CHECK(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &presentSemaphore));
-    QUEUE_DESTROY(vkDestroySemaphore(device, presentSemaphore, nullptr));
-    VK_CHECK(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &renderSemaphore));
-    QUEUE_DESTROY(vkDestroySemaphore(device, renderSemaphore, nullptr));
+
+    for (FrameData &frame : frames) 
+    {
+        VK_CHECK(vkCreateFence(device, &fenceCreateInfo, nullptr, &frame.renderFence));
+        QUEUE_DESTROY(vkDestroyFence(device, frame.renderFence, nullptr));
+
+        VK_CHECK(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &frame.presentSemaphore));
+        QUEUE_DESTROY(vkDestroySemaphore(device, frame.presentSemaphore, nullptr));
+        VK_CHECK(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &frame.renderSemaphore));
+        QUEUE_DESTROY(vkDestroySemaphore(device, frame.renderSemaphore, nullptr));
+    }
 }
 
 MaterialHandle Engine::createMaterial(const char *vertexModulePath, const char *fragmentModulePath, MeshHandle vertexDescriptionMesh)

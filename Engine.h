@@ -8,8 +8,10 @@
 #include <Mesh.h>
 #include <mat.h>
 #include <vec.h>
-#include <Time.h>
+#include <Timer.h>
 #include <unordered_map>
+#include <Camera.h>
+#include <array>
 
 struct GLFWwindow;
 
@@ -90,61 +92,30 @@ struct RenderObject
 	mat4x4 transform;
 };
 
+struct SwapchainInfo
+{
+	VkSwapchainKHR swapchain{};
+	VkFormat format{};
+	std::vector<VkImage> images{};
+	std::vector<VkImageView> imageViews{};
+};
+
+struct FrameData 
+{
+	VkSemaphore presentSemaphore;
+	VkSemaphore renderSemaphore;
+	VkFence renderFence;
+
+	VkCommandPool commandPool;
+	VkCommandBuffer mainCommandBuffer;
+};
+constexpr uint32_t overlappingFrameNumber = 2;
+
 class Engine
 {
 public:
 
-	void run();
-
-	VkInstance instance{};
-#ifndef NDEBUG
-	VkDebugUtilsMessengerEXT debugMessenger{};
-#endif
-	GLFWwindow *window{};
-	VkSurfaceKHR surface{};
-	VkPhysicalDevice physicalDevice{};
-	VkDevice device{};
-
-	VkQueue graphicsQueue{}; 
-	uint32_t graphicsQueueFamily{};
-
-	VkCommandPool commandPool{};
-	VkCommandBuffer mainCommandBuffer{};
-
-	struct SwapchainInfo
-	{
-		VkSwapchainKHR swapchain{};
-		VkFormat format{};
-		std::vector<VkImage> images{};
-		std::vector<VkImageView> imageViews{};
-	};
-
-	SwapchainInfo swapchainInfo{};
-
-	struct MeshPushConstants {
-		vec4 data;
-		mat4x4 renderMatrix;
-	};
-
-	static constexpr VkExtent2D windowExtent{ 1700 , 900 };
-
-	VkRenderPass renderPass{};
-
-	std::vector<VkFramebuffer> framebuffers;
-
-	VkSemaphore presentSemaphore{};
-	VkSemaphore renderSemaphore{};
-	VkFence renderFence{};
-
-	VkImageView depthImageView{};
-	AllocatedImage depthImage{};
-	VkFormat depthFormat{};
-
-	DeletionQueue mainDeletionQueue{};
-
-	std::vector<RenderObject> renderables;
-	std::unordered_map<MaterialHandle, Material> materials;
-	std::unordered_map<MeshHandle, Mesh> meshes;
+	Camera camera;
 
 	[[nodiscard]]
 	MaterialHandle createMaterial(const char *vertexModulePath, const char *fragmentModulePath, MeshHandle vertexDescriptionMesh);
@@ -157,16 +128,23 @@ public:
 	Material* getMaterial(MaterialHandle handle);
 	[[nodiscard]]
 	Mesh *getMesh(MeshHandle handle);
+
+	GLFWwindow *getWindow() const;
 	
 	void addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform);
 
+	bool shouldQuit() const;
+	
+	void draw(Time deltaTime);
 	void drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count);
 
-	Engine();
+	Engine(Camera givenCamera, VkExtent2D givenWindowExtent);
 	~Engine();
 private:
 
-	void draw(Time deltaTime);
+	std::array<FrameData, overlappingFrameNumber> frames;
+	FrameData &currentFrame() { return frames[frameCount % overlappingFrameNumber]; }
+
 	void initVulkan();
 	void initCommands();
 	void initDefaultRenderpass();
@@ -176,6 +154,41 @@ private:
 
 	bool initialized = false;
 	size_t frameCount{};
+
+	VkInstance instance{};
+#ifndef NDEBUG
+	VkDebugUtilsMessengerEXT debugMessenger{};
+#endif
+	GLFWwindow *window{};
+	VkSurfaceKHR surface{};
+	VkPhysicalDevice physicalDevice{};
+	VkDevice device{};
+
+	VkQueue graphicsQueue{};
+	uint32_t graphicsQueueFamily{};
+
+	SwapchainInfo swapchainInfo{};
+
+	struct MeshPushConstants {
+		vec4 data;
+		mat4x4 renderMatrix;
+	};
+
+	VkExtent2D windowExtent;
+
+	VkRenderPass renderPass{};
+
+	std::vector<VkFramebuffer> framebuffers;
+
+	VkImageView depthImageView{};
+	AllocatedImage depthImage{};
+	VkFormat depthFormat{};
+
+	DeletionQueue mainDeletionQueue{};
+
+	std::vector<RenderObject> renderables;
+	std::unordered_map<MaterialHandle, Material> materials;
+	std::unordered_map<MeshHandle, Mesh> meshes;
 
 	VmaAllocator allocator{};
 

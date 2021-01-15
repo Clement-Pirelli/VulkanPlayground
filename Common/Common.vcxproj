@@ -154,9 +154,11 @@
     <ClInclude Include="..\Dependencies\include\Files.h" />
     <ClInclude Include="..\Dependencies\include\Logger\Logger.h" />
     <ClInclude Include="AttributeType.h" />
+    <ClInclude Include="Camera.h" />
+    <ClInclude Include="MathUtils.h" />
     <ClInclude Include="Mesh.h" />
     <ClInclude Include="OFileSerialization.h" />
-    <ClInclude Include="Time.h" />
+    <ClInclude Include="Timer.h" />
     <ClInclude Include="VkBootstrap.h" />
     <ClInclude Include="VkInitializers.h" />
     <ClInclude Include="VkTypes.h" />
@@ -164,9 +166,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Dependencies\include\Logger\Logger.cpp" />
+    <ClCompile Include="Camera.cpp" />
     <ClCompile Include="Mesh.cpp" />
     <ClCompile Include="OFileSerialization.cpp" />
-    <ClCompile Include="Time.cpp" />
+    <ClCompile Include="Timer.cpp" />
     <ClCompile Include="VkBootstrap.cpp" />
     <ClCompile Include="VkInitializers.cpp" />
     <ClCompile Include="VkTypes.cpp" />
