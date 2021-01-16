@@ -100,6 +100,12 @@ struct SwapchainInfo
 	std::vector<VkImageView> imageViews{};
 };
 
+struct GPUCameraData {
+	mat4x4 view;
+	mat4x4 projection;
+	mat4x4 viewProjection;
+};
+
 struct FrameData 
 {
 	VkSemaphore presentSemaphore;
@@ -108,6 +114,9 @@ struct FrameData
 
 	VkCommandPool commandPool;
 	VkCommandBuffer mainCommandBuffer;
+
+	AllocatedBuffer cameraBuffer;
+	VkDescriptorSet globalDescriptorSet;
 };
 constexpr uint32_t overlappingFrameNumber = 2;
 
@@ -151,6 +160,7 @@ private:
 	void initFramebuffers();
 	void initSyncPrimitives();
 	void initDepthResources();
+	void initDescriptors();
 
 	bool initialized = false;
 	size_t frameCount{};
@@ -183,6 +193,9 @@ private:
 	VkImageView depthImageView{};
 	AllocatedImage depthImage{};
 	VkFormat depthFormat{};
+
+	VkDescriptorSetLayout globalSetLayout;
+	VkDescriptorPool descriptorPool;
 
 	DeletionQueue mainDeletionQueue{};
 

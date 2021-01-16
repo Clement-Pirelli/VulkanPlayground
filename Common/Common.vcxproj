@@ -155,6 +155,7 @@
     <ClInclude Include="..\Dependencies\include\Logger\Logger.h" />
     <ClInclude Include="AttributeType.h" />
     <ClInclude Include="Camera.h" />
+    <ClInclude Include="CommonConcepts.h" />
     <ClInclude Include="MathUtils.h" />
     <ClInclude Include="Mesh.h" />
     <ClInclude Include="OFileSerialization.h" />

@@ -8,6 +8,7 @@
 #include "OFileSerialization.h"
 #include <array>
 #include <MathUtils.h>
+#include <CommonConcepts.h>
 
 
 #define VKB_CHECK(result, msg) if(!result) {Logger::logErrorFormatted("%s. Cause: %s", msg, result.error().message().c_str()); return; }
@@ -78,6 +79,40 @@ namespace
             }
         };
     }
+
+    AllocatedBuffer createBuffer(size_t allocSize, VkBufferUsageFlags usage, VmaAllocator allocator, VmaMemoryUsage memoryUsage)
+    {
+        const VkBufferCreateInfo bufferInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = allocSize,
+            .usage = usage
+        };
+
+        const VmaAllocationCreateInfo vmaallocInfo
+        {
+            .usage = memoryUsage
+        };
+
+        AllocatedBuffer newBuffer;
+
+        //allocate the buffer
+        VK_CHECK(vmaCreateBuffer(allocator, &bufferInfo, &vmaallocInfo,
+            &newBuffer.buffer,
+            &newBuffer.allocation,
+            nullptr));
+
+        return newBuffer;
+    }
+
+    template<typename T>
+    void uploadToGPU(VmaAllocator allocator, VmaAllocation allocation, T* t, size_t size = sizeof(T))
+    {
+        void *data;
+        vmaMapMemory(allocator, allocation, &data);
+        memcpy(data, t, size);
+        vmaUnmapMemory(allocator, allocation);
+    }
 }
 
 MaterialHandle Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout)
@@ -135,6 +170,15 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count)
     mat4x4 projectionMatrix = mat4x4::perspective(perspectiveProjection);
     projectionMatrix.at(1, 1) *= -1.0f;
 
+    const GPUCameraData cameraData
+    {
+        .view = viewMatrix,
+        .projection = projectionMatrix,
+        .viewProjection = projectionMatrix * viewMatrix
+    };
+
+    uploadToGPU(allocator, currentFrame().cameraBuffer.allocation, &cameraData);
+
     Mesh* lastMesh = nullptr;
     Material* lastMaterial = nullptr;
     for (int i = 0; i < count; i++)
@@ -146,18 +190,14 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count)
         {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline);
             lastMaterial = object.material;
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 0, 1, &currentFrame().globalDescriptorSet, 0, nullptr);
         }
-
-
-        const mat4x4 modelMatrix = object.transform;
-        const mat4x4 meshMatrix = projectionMatrix * viewMatrix * modelMatrix;
 
         const MeshPushConstants constants
         {
-            .renderMatrix = meshMatrix
+            .renderMatrix = object.transform
         };
 
-        //upload the mesh to the gpu via pushconstants
         vkCmdPushConstants(cmd, object.material->pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshPushConstants), &constants);
 
         //only bind the mesh if its a different one from last bind
@@ -193,6 +233,7 @@ Engine::Engine(Camera givenCamera, VkExtent2D givenWindowExtent) : camera(givenC
     initDefaultRenderpass();
     initFramebuffers();
     initSyncPrimitives();
+    initDescriptors();
     Logger::logMessage("Successfully initialized vulkan resources!");
 
     initialized = true;
@@ -506,7 +547,7 @@ MaterialHandle Engine::createMaterial(const char *vertexModulePath, const char *
         .offset = 0,
         .size = sizeof(MeshPushConstants),
     };
-    const VkPipelineLayout pipelineLayout = vkut::createPipelineLayout(device, {}, { meshConstants });
+    const VkPipelineLayout pipelineLayout = vkut::createPipelineLayout(device, { globalSetLayout }, { meshConstants });
     QUEUE_DESTROY(vkut::destroyPipelineLayout(device, pipelineLayout));
 
     const VertexInputDescription vertexInputDescription = meshes[vertexDescriptionMesh].getDescription();
@@ -589,6 +630,76 @@ void Engine::initDepthResources()
     QUEUE_DESTROY(vkDestroyImageView(device, depthImageView, nullptr));
 }
 
+void Engine::initDescriptors()
+{
+    const VkDescriptorSetLayoutBinding cameraBufferBinding
+    {
+        .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+    };
+    globalSetLayout = vkut::createDescriptorSetLayout(device, {cameraBufferBinding});
+    QUEUE_DESTROY(vkut::destroyDescriptorSetLayout(device, globalSetLayout));
+
+    const std::vector<VkDescriptorPoolSize> sizes =
+    {
+        VkDescriptorPoolSize
+        {
+            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 
+            .descriptorCount = 10  //arbitrary big number
+        }
+    };
+
+    const VkDescriptorPoolCreateInfo poolInfo
+    {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets = 10,
+        .poolSizeCount = (uint32_t)sizes.size(),
+        .pPoolSizes = sizes.data()
+    };
+   
+    vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
+    QUEUE_DESTROY(vkDestroyDescriptorPool(device, descriptorPool, nullptr));
+
+    for (uint32_t i = 0; i < overlappingFrameNumber; i++)
+    {
+        frames[i].cameraBuffer = createBuffer(sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        QUEUE_DESTROY(vmaDestroyBuffer(allocator, frames[i].cameraBuffer.buffer, frames[i].cameraBuffer.allocation));
+
+        const VkDescriptorSetAllocateInfo allocInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = descriptorPool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &globalSetLayout
+        };
+
+        vkAllocateDescriptorSets(device, &allocInfo, &frames[i].globalDescriptorSet);
+        QUEUE_DESTROY(vkFreeDescriptorSets(device, descriptorPool, 1, &frames[i].globalDescriptorSet));
+
+        const VkDescriptorBufferInfo bufferInfo
+        {
+            .buffer = frames[i].cameraBuffer.buffer,
+            .offset = 0,
+            .range = sizeof(GPUCameraData)
+        };
+
+        const VkWriteDescriptorSet setWrite
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = frames[i].globalDescriptorSet,
+            .dstBinding = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .pBufferInfo = &bufferInfo
+        };
+
+        vkUpdateDescriptorSets(device, 1, &setWrite, 0, nullptr);
+    }
+}
+
 MeshHandle Engine::loadMesh(const char *path)
 {
     auto loadResult = Mesh::load(path);
@@ -653,14 +764,7 @@ void Engine::uploadMesh(Mesh &mesh)
 
     QUEUE_DESTROY(vmaDestroyBuffer(allocator, mesh.vertexBuffer.buffer, mesh.vertexBuffer.allocation));
 
-    {
-        void *data;
-        vmaMapMemory(allocator, mesh.vertexBuffer.allocation, &data);
-
-        memcpy(data, mesh.data.vertices().data(), mesh.data.vertexAmount() * mesh.data.vertexSize());
-
-        vmaUnmapMemory(allocator, mesh.vertexBuffer.allocation);
-    }
+    uploadToGPU(allocator, mesh.vertexBuffer.allocation, mesh.data.vertices().data(), mesh.data.vertexAmount() * mesh.data.vertexSize());
 
     const uint32_t indexBufferSize = (uint32_t)(mesh.data.indices().size() * sizeof(mesh.data.indices()[0]));
     const VkBufferCreateInfo indexBufferInfo
@@ -677,12 +781,5 @@ void Engine::uploadMesh(Mesh &mesh)
 
     QUEUE_DESTROY(vmaDestroyBuffer(allocator, mesh.indexBuffer.buffer, mesh.indexBuffer.allocation));
 
-    {
-        void *data;
-        vmaMapMemory(allocator, mesh.indexBuffer.allocation, &data);
-
-        memcpy(data, mesh.data.indices().data(), indexBufferSize);
-
-        vmaUnmapMemory(allocator, mesh.indexBuffer.allocation);
-    }
+    uploadToGPU(allocator, mesh.indexBuffer.allocation, mesh.data.indices().data(), indexBufferSize);
 }
