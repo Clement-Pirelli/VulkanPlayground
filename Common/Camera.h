@@ -17,7 +17,7 @@ class Camera
 {
 public:
 
-    Camera(vec3 givenPosition, vec3 givenFront, vec3 givenUp) : position(givenPosition), front(givenFront), up(givenUp)
+    Camera(vec3 givenPosition, vec3 givenFront, vec3 givenUp, bool givenInverted = false) : position(givenPosition), front(givenFront), up(givenUp), inverted(givenInverted)
     {
     }
     Camera() = default;
@@ -27,7 +27,7 @@ public:
         offset *= mouseSensitivity;
 
         yaw += offset.x();
-        pitch += offset.y();
+        pitch += offset.y() * (inverted ? 1.0f : -1.0f);
 
         if (pitch > math::degToRad(89.0f))
             pitch = math::degToRad(89.0f);
@@ -68,6 +68,7 @@ public:
     vec3 up{};
     float speed = .01f;
     float mouseSensitivity = .01f;
+    bool inverted = false;
 
 private:
 

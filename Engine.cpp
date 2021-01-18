@@ -363,7 +363,14 @@ void Engine::initVulkan()
         .require_api_version(1, 2, 0)
 #ifndef NDEBUG
         .enable_validation_layers()
-        .use_default_debug_messenger()
+        .set_debug_callback([](VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType, const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *)
+            -> VkBool32 
+            {
+                auto severity = vkb::to_string_message_severity(messageSeverity);
+                auto type = vkb::to_string_message_type(messageType);
+                Logger::logErrorFormatted("[%s : %s] : %s", severity, type, pCallbackData->pMessage);
+                return VK_FALSE;
+            })
 #endif
         .build();
 
@@ -418,6 +425,8 @@ void Engine::initVulkan()
     };
     VK_CHECK(vmaCreateAllocator(&allocatorInfo, &allocator));
     QUEUE_DESTROY(vmaDestroyAllocator(allocator));
+
+    vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
 }
 
 void Engine::initCommands()
@@ -660,7 +669,7 @@ void Engine::initDescriptors()
         .pPoolSizes = sizes.data()
     };
    
-    vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool);
+    VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
     QUEUE_DESTROY(vkDestroyDescriptorPool(device, descriptorPool, nullptr));
 
     for (uint32_t i = 0; i < overlappingFrameNumber; i++)
@@ -676,7 +685,7 @@ void Engine::initDescriptors()
             .pSetLayouts = &globalSetLayout
         };
 
-        vkAllocateDescriptorSets(device, &allocInfo, &frames[i].globalDescriptorSet);
+        VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &frames[i].globalDescriptorSet));
         QUEUE_DESTROY(vkFreeDescriptorSets(device, descriptorPool, 1, &frames[i].globalDescriptorSet));
 
         const VkDescriptorBufferInfo bufferInfo

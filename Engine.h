@@ -106,6 +106,14 @@ struct GPUCameraData {
 	mat4x4 viewProjection;
 };
 
+struct GPUSceneData {
+	 vec4 fogColor; // w is for exponent
+	 vec4 fogDistances; //x for min, y for max, zw unused.
+	 vec4 ambientColor;
+	 vec4 sunlightDirection; //w for sun power
+	 vec4 sunlightColor;
+};
+
 struct FrameData 
 {
 	VkSemaphore presentSemaphore;
@@ -172,7 +180,9 @@ private:
 	GLFWwindow *window{};
 	VkSurfaceKHR surface{};
 	VkPhysicalDevice physicalDevice{};
+	VkPhysicalDeviceProperties physicalDeviceProperties{};
 	VkDevice device{};
+
 
 	VkQueue graphicsQueue{};
 	uint32_t graphicsQueueFamily{};
@@ -184,7 +194,7 @@ private:
 		mat4x4 renderMatrix;
 	};
 
-	VkExtent2D windowExtent;
+	VkExtent2D windowExtent{};
 
 	VkRenderPass renderPass{};
 
@@ -194,8 +204,8 @@ private:
 	AllocatedImage depthImage{};
 	VkFormat depthFormat{};
 
-	VkDescriptorSetLayout globalSetLayout;
-	VkDescriptorPool descriptorPool;
+	VkDescriptorSetLayout globalSetLayout{};
+	VkDescriptorPool descriptorPool{};
 
 	DeletionQueue mainDeletionQueue{};
 
