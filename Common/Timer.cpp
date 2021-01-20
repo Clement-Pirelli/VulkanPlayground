@@ -3,7 +3,7 @@
 
 Time Time::now()
 {
-	return glfwGetTime();
+	return (float)glfwGetTime();
 }
 
 float Time::asMilliseconds()

@@ -106,12 +106,24 @@ namespace
     }
 
     template<typename T>
-    void uploadToGPU(VmaAllocator allocator, VmaAllocation allocation, T* t, size_t size = sizeof(T))
+    struct UploadInfo
     {
-        void *data;
-        vmaMapMemory(allocator, allocation, &data);
-        memcpy(data, t, size);
-        vmaUnmapMemory(allocator, allocation);
+        const T *data;
+        VmaAllocator allocator;
+        VmaAllocation allocation;
+        std::optional<size_t> size;
+        size_t offset = 0;
+
+        size_t getSize() const { return size.value_or(sizeof(T)); }
+    };
+
+    template<typename T>
+    void uploadToGPU(UploadInfo<T> info)
+    {
+        char *address;
+        vmaMapMemory(info.allocator, info.allocation, (void**)&address);
+        memcpy(address + info.offset, info.data, info.getSize());
+        vmaUnmapMemory(info.allocator, info.allocation);
     }
 }
 
@@ -156,8 +168,9 @@ GLFWwindow *Engine::getWindow() const
     return window;
 }
 
-void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count)
+void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t objectCount)
 {
+    FrameData &frame = currentFrame();
     const mat4x4 viewMatrix = camera.calculateViewMatrix();
     
     const mat4x4::PerspectiveProjection perspectiveProjection
@@ -170,18 +183,28 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count)
     mat4x4 projectionMatrix = mat4x4::perspective(perspectiveProjection);
     projectionMatrix.at(1, 1) *= -1.0f;
 
-    const GPUCameraData cameraData
+    GPUCameraData cameraData
     {
         .view = viewMatrix,
         .projection = projectionMatrix,
         .viewProjection = projectionMatrix * viewMatrix
     };
 
-    uploadToGPU(allocator, currentFrame().cameraBuffer.allocation, &cameraData);
+    uploadToGPU<GPUCameraData>({ .data = &cameraData, .allocator = allocator, .allocation = frame.cameraBuffer.allocation });
+
+    //slightly more complex than uploadToGPU, essentially copying the transforms of the objects to the mapped pointer
+    GPUObjectData *objectData;
+    vmaMapMemory(allocator, frame.objectsBuffer.allocation, (void**)&objectData);
+    for (int i = 0; i < objectCount; i++)
+    {
+        RenderObject &object = first[i];
+        objectData[i].modelMatrix = object.transform;
+    }
+    vmaUnmapMemory(allocator, frame.objectsBuffer.allocation);
 
     Mesh* lastMesh = nullptr;
     Material* lastMaterial = nullptr;
-    for (int i = 0; i < count; i++)
+    for (int i = 0; i < objectCount; i++)
     {
         const RenderObject& object = first[i];
 
@@ -190,7 +213,9 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count)
         {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline);
             lastMaterial = object.material;
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 0, 1, &currentFrame().globalDescriptorSet, 0, nullptr);
+            const uint32_t uniform_offset = (uint32_t)(vkut::padUniformBufferSize(sizeof(GPUSceneData), physicalDeviceProperties) * currentFrameIndex());
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 0, 1, &frame.globalDescriptorSet, 1, &uniform_offset);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 1, 1, &frame.objectsDescriptor, 0, nullptr);
         }
 
         const MeshPushConstants constants
@@ -208,7 +233,7 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count)
             lastMesh = object.mesh;
         }
         const VkDeviceSize offset = 0;
-        vkCmdDrawIndexed(cmd, (uint32_t)object.mesh->data.indices().size(), 1, 0, 0, 0);
+        vkCmdDrawIndexed(cmd, (uint32_t)object.mesh->data.indices().size(), 1, 0, 0, i); //i is passed as firstInstance for the gl_BaseInstance trick
     }
 }
 
@@ -275,6 +300,18 @@ void Engine::draw(Time deltaTime)
     VK_CHECK(vkBeginCommandBuffer(frame.mainCommandBuffer, &commandBufferBeginInfo));
     {
         const float flash = (float)abs(sin(frameCount / 120.f));
+        const float framed = (frameCount / 120.f);
+
+        sceneParameters.ambientColor = { sin(framed),0,cos(framed),1 };
+
+        const UploadInfo<GPUSceneData> sceneUploadInfo
+        {
+            .data = &sceneParameters,
+            .allocator = allocator,
+            .allocation = sceneParameterBuffer.allocation,
+            .offset = vkut::padUniformBufferSize(sizeof(GPUSceneData), physicalDeviceProperties) * currentFrameIndex()
+        };
+        uploadToGPU(sceneUploadInfo);
 
         const std::array<VkClearValue, 2> clearValues
         {
@@ -556,7 +593,7 @@ MaterialHandle Engine::createMaterial(const char *vertexModulePath, const char *
         .offset = 0,
         .size = sizeof(MeshPushConstants),
     };
-    const VkPipelineLayout pipelineLayout = vkut::createPipelineLayout(device, { globalSetLayout }, { meshConstants });
+    const VkPipelineLayout pipelineLayout = vkut::createPipelineLayout(device, { globalSetLayout, objectsSetLayout }, { meshConstants });
     QUEUE_DESTROY(vkut::destroyPipelineLayout(device, pipelineLayout));
 
     const VertexInputDescription vertexInputDescription = meshes[vertexDescriptionMesh].getDescription();
@@ -641,22 +678,55 @@ void Engine::initDepthResources()
 
 void Engine::initDescriptors()
 {
-    const VkDescriptorSetLayoutBinding cameraBufferBinding
+    const size_t sceneParamBufferSize = overlappingFrameNumber * vkut::padUniformBufferSize(sizeof(GPUSceneData), physicalDeviceProperties);
+    sceneParameterBuffer = createBuffer(sceneParamBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
+    QUEUE_DESTROY(vmaDestroyBuffer(allocator, sceneParameterBuffer.buffer, sceneParameterBuffer.allocation));
+    
+    //global set layout
+    {
+        const VkDescriptorSetLayoutBinding cameraBufferBinding
+        {
+            .binding = 0,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+        };
+
+        const VkDescriptorSetLayoutBinding sceneParamBufferBinding
+        {
+            .binding = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+            .descriptorCount = 1,
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+        };
+        globalSetLayout = vkut::createDescriptorSetLayout(device, { cameraBufferBinding, sceneParamBufferBinding });
+        QUEUE_DESTROY(vkut::destroyDescriptorSetLayout(device, globalSetLayout));
+    }
+
+    VkDescriptorSetLayoutBinding objectsBinding
     {
         .binding = 0,
-        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
         .descriptorCount = 1,
         .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
     };
-    globalSetLayout = vkut::createDescriptorSetLayout(device, {cameraBufferBinding});
-    QUEUE_DESTROY(vkut::destroyDescriptorSetLayout(device, globalSetLayout));
+
+    objectsSetLayout = vkut::createDescriptorSetLayout(device, { objectsBinding });
+    QUEUE_DESTROY(vkut::destroyDescriptorSetLayout(device, objectsSetLayout));
 
     const std::vector<VkDescriptorPoolSize> sizes =
     {
-        VkDescriptorPoolSize
         {
             .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 
-            .descriptorCount = 10  //arbitrary big number
+            .descriptorCount = 10  //these are arbitrary big numbers for now
+        },
+        { 
+            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 
+            .descriptorCount = 10 
+        },
+        {
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 
+            .descriptorCount = 10 
         }
     };
 
@@ -664,7 +734,7 @@ void Engine::initDescriptors()
     {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        .maxSets = 10,
+        .maxSets = 30,
         .poolSizeCount = (uint32_t)sizes.size(),
         .pPoolSizes = sizes.data()
     };
@@ -674,38 +744,92 @@ void Engine::initDescriptors()
 
     for (uint32_t i = 0; i < overlappingFrameNumber; i++)
     {
-        frames[i].cameraBuffer = createBuffer(sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
-        QUEUE_DESTROY(vmaDestroyBuffer(allocator, frames[i].cameraBuffer.buffer, frames[i].cameraBuffer.allocation));
-
-        const VkDescriptorSetAllocateInfo allocInfo
+        FrameData &currentFrame = frames[i];
+        
+        //global set allocations
         {
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .descriptorPool = descriptorPool,
-            .descriptorSetCount = 1,
-            .pSetLayouts = &globalSetLayout
-        };
+            currentFrame.cameraBuffer = createBuffer(sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
+            QUEUE_DESTROY(vmaDestroyBuffer(allocator, currentFrame.cameraBuffer.buffer, currentFrame.cameraBuffer.allocation));
 
-        VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &frames[i].globalDescriptorSet));
-        QUEUE_DESTROY(vkFreeDescriptorSets(device, descriptorPool, 1, &frames[i].globalDescriptorSet));
+            const VkDescriptorSetAllocateInfo globalAllocationInfo
+            {
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                .descriptorPool = descriptorPool,
+                .descriptorSetCount = 1,
+                .pSetLayouts = &globalSetLayout
+            };
 
-        const VkDescriptorBufferInfo bufferInfo
+            VK_CHECK(vkAllocateDescriptorSets(device, &globalAllocationInfo, &currentFrame.globalDescriptorSet));
+            QUEUE_DESTROY(vkFreeDescriptorSets(device, descriptorPool, 1, &currentFrame.globalDescriptorSet));
+        }
+        
+        //objects set allocations
         {
-            .buffer = frames[i].cameraBuffer.buffer,
+            currentFrame.objectsBuffer = createBuffer(sizeof(GPUObjectData) * maxObjects, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
+            QUEUE_DESTROY(vmaDestroyBuffer(allocator, currentFrame.objectsBuffer.buffer, currentFrame.objectsBuffer.allocation));
+            const VkDescriptorSetAllocateInfo objectsAllocationInfo
+            {
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                .descriptorPool = descriptorPool,
+                .descriptorSetCount = 1,
+                .pSetLayouts = &objectsSetLayout
+            };
+
+            vkAllocateDescriptorSets(device, &objectsAllocationInfo, &currentFrame.objectsDescriptor);
+            QUEUE_DESTROY(vkFreeDescriptorSets(device, descriptorPool, 1, &currentFrame.objectsDescriptor));
+        }
+
+        const VkDescriptorBufferInfo cameraBufferInfo
+        {
+            .buffer = currentFrame.cameraBuffer.buffer,
             .offset = 0,
             .range = sizeof(GPUCameraData)
         };
-
-        const VkWriteDescriptorSet setWrite
+        const VkWriteDescriptorSet cameraWrite
         {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = frames[i].globalDescriptorSet,
+            .dstSet = currentFrame.globalDescriptorSet,
             .dstBinding = 0,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pBufferInfo = &bufferInfo
+            .pBufferInfo = &cameraBufferInfo
         };
 
-        vkUpdateDescriptorSets(device, 1, &setWrite, 0, nullptr);
+        const VkDescriptorBufferInfo sceneInfo
+        {
+            .buffer = sceneParameterBuffer.buffer,
+            .offset = 0, //even though we are offsetting into this buffer, it's done dynamically
+            .range = sizeof(GPUSceneData)
+        };
+        const VkWriteDescriptorSet sceneWrite
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = currentFrame.globalDescriptorSet,
+            .dstBinding = 1,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+            .pBufferInfo = &sceneInfo
+        };
+
+        const VkDescriptorBufferInfo objectBufferInfo
+        {
+            .buffer = currentFrame.objectsBuffer.buffer,
+            .offset = 0,
+            .range = sizeof(GPUObjectData) * maxObjects
+        };
+        const VkWriteDescriptorSet objectWrite
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = currentFrame.objectsDescriptor,
+            .dstBinding = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .pBufferInfo = &objectBufferInfo
+        };
+
+        std::array<VkWriteDescriptorSet, 3> setWrites = { cameraWrite, sceneWrite, objectWrite };
+
+        vkUpdateDescriptorSets(device, (uint32_t)setWrites.size(), setWrites.data(), 0, nullptr); //here we update both descriptor sets at once - this is normal
     }
 }
 
@@ -773,7 +897,14 @@ void Engine::uploadMesh(Mesh &mesh)
 
     QUEUE_DESTROY(vmaDestroyBuffer(allocator, mesh.vertexBuffer.buffer, mesh.vertexBuffer.allocation));
 
-    uploadToGPU(allocator, mesh.vertexBuffer.allocation, mesh.data.vertices().data(), mesh.data.vertexAmount() * mesh.data.vertexSize());
+    const UploadInfo<uint8_t> vertexUploadInfo 
+    {
+        .data = mesh.data.vertices().data(), 
+        .allocator = allocator, 
+        .allocation = mesh.vertexBuffer.allocation, 
+        .size = mesh.data.vertexAmount() * mesh.data.vertexSize() 
+    };
+    uploadToGPU(vertexUploadInfo);
 
     const uint32_t indexBufferSize = (uint32_t)(mesh.data.indices().size() * sizeof(mesh.data.indices()[0]));
     const VkBufferCreateInfo indexBufferInfo
@@ -789,6 +920,13 @@ void Engine::uploadMesh(Mesh &mesh)
         nullptr));
 
     QUEUE_DESTROY(vmaDestroyBuffer(allocator, mesh.indexBuffer.buffer, mesh.indexBuffer.allocation));
-
-    uploadToGPU(allocator, mesh.indexBuffer.allocation, mesh.data.indices().data(), indexBufferSize);
+    
+    const UploadInfo<uint32_t> indexUploadInfo
+    {
+        .data = mesh.data.indices().data(),
+        .allocator = allocator,
+        .allocation = mesh.indexBuffer.allocation,
+        .size = indexBufferSize
+    };
+    uploadToGPU(indexUploadInfo);
 }

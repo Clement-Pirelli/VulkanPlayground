@@ -118,6 +118,9 @@ namespace vkut {
 	[[nodiscard]]
 	std::optional<VkShaderModule> createShaderModule(VkDevice device, const char *path);
 	void destroyShaderModule(VkDevice device, VkShaderModule shaderModule);
+
+	[[nodiscard]]
+	size_t padUniformBufferSize(size_t originalSize, const VkPhysicalDeviceProperties& deviceProperties);
 }
 
 #endif

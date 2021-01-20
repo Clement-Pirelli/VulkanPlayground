@@ -158,6 +158,20 @@ namespace vkut {
 		Logger::logTrivialFormatted("Destroyed shader module %u!", shaderModule);
 	}
 
+	//from: https://github.com/SaschaWillems/Vulkan/tree/master/examples/dynamicuniformbuffer
+	size_t padUniformBufferSize(size_t originalSize, const VkPhysicalDeviceProperties &deviceProperties)
+	{
+		// Calculate required alignment based on minimum device offset alignment
+		const size_t minUboAlignment = deviceProperties.limits.minUniformBufferOffsetAlignment;
+		if (minUboAlignment > 0) {
+			return (originalSize + minUboAlignment - 1) & ~(minUboAlignment - 1);
+		}
+		else 
+		{
+			return originalSize;
+		}
+	}
+
 	VkFramebuffer createRenderPassFramebuffer(const CreateRenderPassFramebufferInfo &info)
 	{
 		assert(info.colorViews.size() != 0);

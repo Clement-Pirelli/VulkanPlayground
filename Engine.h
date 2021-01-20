@@ -82,6 +82,7 @@ namespace std
 		}
 	};
 }
+
 using MeshHandle = EngineResourceHandle<struct MeshID>;
 using MaterialHandle = EngineResourceHandle<struct MaterialID>;
 
@@ -100,18 +101,26 @@ struct SwapchainInfo
 	std::vector<VkImageView> imageViews{};
 };
 
-struct GPUCameraData {
+struct GPUCameraData 
+{
 	mat4x4 view;
 	mat4x4 projection;
 	mat4x4 viewProjection;
 };
 
-struct GPUSceneData {
-	 vec4 fogColor; // w is for exponent
-	 vec4 fogDistances; //x for min, y for max, zw unused.
+struct GPUSceneData 
+{
+	 vec4 example1;
+	 vec4 example2;
 	 vec4 ambientColor;
 	 vec4 sunlightDirection; //w for sun power
 	 vec4 sunlightColor;
+};
+
+constexpr size_t maxObjects = 10'000;
+struct GPUObjectData 
+{
+	mat4x4 modelMatrix;
 };
 
 struct FrameData 
@@ -125,7 +134,11 @@ struct FrameData
 
 	AllocatedBuffer cameraBuffer;
 	VkDescriptorSet globalDescriptorSet;
+
+	AllocatedBuffer objectsBuffer;
+	VkDescriptorSet objectsDescriptor;
 };
+
 constexpr uint32_t overlappingFrameNumber = 2;
 
 class Engine
@@ -160,7 +173,8 @@ public:
 private:
 
 	std::array<FrameData, overlappingFrameNumber> frames;
-	FrameData &currentFrame() { return frames[frameCount % overlappingFrameNumber]; }
+	size_t currentFrameIndex() { return frameCount % overlappingFrameNumber; }
+	FrameData &currentFrame() { return frames[currentFrameIndex()]; }
 
 	void initVulkan();
 	void initCommands();
@@ -205,7 +219,11 @@ private:
 	VkFormat depthFormat{};
 
 	VkDescriptorSetLayout globalSetLayout{};
+	VkDescriptorSetLayout objectsSetLayout{};
 	VkDescriptorPool descriptorPool{};
+
+	GPUSceneData sceneParameters{};
+	AllocatedBuffer sceneParameterBuffer{};
 
 	DeletionQueue mainDeletionQueue{};
 

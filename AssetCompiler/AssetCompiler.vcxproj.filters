@@ -29,5 +29,17 @@
     <None Include="..\raw_assets\shaders\shader.vert">
       <Filter>Shaders</Filter>
     </None>
+    <None Include="..\raw_assets\shaders\dragon.vert">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="..\raw_assets\shaders\monkey.vert">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="..\raw_assets\shaders\onecolorShader.frag">
+      <Filter>Shaders</Filter>
+    </None>
+    <None Include="..\raw_assets\shaders\onecolorShader.vert">
+      <Filter>Shaders</Filter>
+    </None>
   </ItemGroup>
 </Project>
