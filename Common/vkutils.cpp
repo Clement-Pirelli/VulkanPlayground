@@ -304,41 +304,6 @@ namespace vkut {
 		Logger::logMessageFormatted("Destroyed descriptor set layout %u! ", descriptorSetLayout);
 	}
 
-	Image createImage(
-		VkDevice device,
-		VkPhysicalDevice physicalDevice,
-		const VkImageCreateInfo &imageCreateInfo,
-		VkMemoryPropertyFlags properties)
-	{
-		Image image = {};
-
-		VK_CHECK(vkCreateImage(device, &imageCreateInfo, nullptr, &image.image));
-
-		VkMemoryRequirements memRequirements = {};
-		vkGetImageMemoryRequirements(device, image.image, &memRequirements);
-
-		const VkMemoryAllocateInfo allocInfo
-		{
-			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-			.allocationSize = memRequirements.size,
-			.memoryTypeIndex = findMemoryType(physicalDevice, memRequirements.memoryTypeBits, properties)
-		};
-
-		VK_CHECK(vkAllocateMemory(device, &allocInfo, nullptr, &image.memory));
-		VK_CHECK(vkBindImageMemory(device, image.image, image.memory, 0));
-
-		Logger::logMessageFormatted("Created image %u with memory %u! ", image.image, image.memory);
-		return image;
-	}
-
-	void destroyImage(VkDevice device, Image image)
-	{
-		vkDestroyImage(device, image.image, nullptr);
-		vkFreeMemory(device, image.memory, nullptr);
-		Logger::logMessageFormatted("Destroyed image %u with memory %u! ", image.image, image.memory);
-	}
-
-
 	VkSampleCountFlagBits getMaxImageSamples(VkPhysicalDevice physicalDevice)
 	{
 		static VkSampleCountFlagBits sampleCount = VK_SAMPLE_COUNT_FLAG_BITS_MAX_ENUM;

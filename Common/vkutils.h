@@ -9,15 +9,54 @@
 #include "vec.h"
 #include "Logger/Logger.h"
 #include "AttributeType.h"
+#include "CommonConcepts.h"
 
-#define VK_CHECK(vkOp) 				  													\
-{									  													\
-	VkResult res = vkOp; 		  														\
-	if(res != VK_SUCCESS)				  												\
-	{ 								  													\
-		Logger::logErrorFormatted("Vulkan result was not VK_SUCCESS! Code : %u", res);	\
-		assert(false);																	\
-	}															  						\
+namespace details
+{
+	//from: Sascha Willems https://github.com/SaschaWillems/Vulkan/blob/334692a6efbf68039f8838d9bb941bd3234eb152/base/VulkanTools.cpp#L28
+	inline const char *errorString(VkResult errorCode)
+	{
+		switch (errorCode)
+		{
+#define STR(r) case VK_ ##r: return #r
+			STR(NOT_READY);
+			STR(TIMEOUT);
+			STR(EVENT_SET);
+			STR(EVENT_RESET);
+			STR(INCOMPLETE);
+			STR(ERROR_OUT_OF_HOST_MEMORY);
+			STR(ERROR_OUT_OF_DEVICE_MEMORY);
+			STR(ERROR_INITIALIZATION_FAILED);
+			STR(ERROR_DEVICE_LOST);
+			STR(ERROR_MEMORY_MAP_FAILED);
+			STR(ERROR_LAYER_NOT_PRESENT);
+			STR(ERROR_EXTENSION_NOT_PRESENT);
+			STR(ERROR_FEATURE_NOT_PRESENT);
+			STR(ERROR_INCOMPATIBLE_DRIVER);
+			STR(ERROR_TOO_MANY_OBJECTS);
+			STR(ERROR_FORMAT_NOT_SUPPORTED);
+			STR(ERROR_SURFACE_LOST_KHR);
+			STR(ERROR_NATIVE_WINDOW_IN_USE_KHR);
+			STR(SUBOPTIMAL_KHR);
+			STR(ERROR_OUT_OF_DATE_KHR);
+			STR(ERROR_INCOMPATIBLE_DISPLAY_KHR);
+			STR(ERROR_VALIDATION_FAILED_EXT);
+			STR(ERROR_INVALID_SHADER_NV);
+#undef STR
+		default:
+			return "UNKNOWN_ERROR";
+		}
+	}
+}
+
+#define VK_CHECK(vkOp) 				  																			\
+{									  																			\
+	VkResult res = vkOp; 		  																				\
+	if(res != VK_SUCCESS)				  																		\
+	{ 								  																			\
+		Logger::logErrorFormatted("Vulkan result was not VK_SUCCESS! Error: %s", details::errorString(res));	\
+		assert(false);																							\
+	}															  												\
 }
 
 namespace vkut {
@@ -35,10 +74,6 @@ namespace vkut {
 		VkDeviceMemory memory;
 		VkDeviceSize size;
 	};
-
-	[[nodiscard]]
-	Image createImage(VkDevice device, VkPhysicalDevice physicalDevice, const VkImageCreateInfo &imageCreateInfo, VkMemoryPropertyFlags properties);
-	void destroyImage(VkDevice device, Image image);
 
 	[[nodiscard]]
 	VkImageView createImageView(VkDevice device, VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels);
@@ -121,6 +156,55 @@ namespace vkut {
 
 	[[nodiscard]]
 	size_t padUniformBufferSize(size_t originalSize, const VkPhysicalDeviceProperties& deviceProperties);
+
+	struct UploadContext {
+		VkDevice device;
+		VkFence uploadFence;
+		VkCommandPool commandPool;
+		VkQueue queue;
+	};
+	template<con::InvocableWith<VkCommandBuffer> Function_t>
+	void submitCommand(UploadContext context, Function_t &&function)
+	{
+		const VkDevice device = context.device;
+
+		const VkCommandBufferAllocateInfo cmdAllocInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool = context.commandPool,
+			.commandBufferCount = 1
+		};
+		VkCommandBuffer cmd;
+		VK_CHECK(vkAllocateCommandBuffers(device, &cmdAllocInfo, &cmd));
+
+		const VkCommandBufferBeginInfo cmdBeginInfo =
+		{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, // We will use this command buffer exactly once
+		};
+
+		VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
+
+		//execute the function
+		function(cmd);
+
+		VK_CHECK(vkEndCommandBuffer(cmd));
+
+		const VkSubmitInfo submit =
+		{
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+			.commandBufferCount = 1,
+			.pCommandBuffers = &cmd
+		};
+
+		VK_CHECK(vkQueueSubmit(context.queue, 1, &submit, context.uploadFence)); // uploadFence will now block until the graphic commands finish execution
+
+		vkWaitForFences(device, 1, &context.uploadFence, true, 9999999999);
+		vkResetFences(device, 1, &context.uploadFence);
+
+		//this will free the command buffer too
+		vkResetCommandPool(device, context.commandPool, 0);
+	}
 }
 
 #endif

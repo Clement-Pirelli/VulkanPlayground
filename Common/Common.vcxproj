@@ -156,18 +156,22 @@
     <ClInclude Include="AttributeType.h" />
     <ClInclude Include="Camera.h" />
     <ClInclude Include="CommonConcepts.h" />
+    <ClInclude Include="Image.h" />
     <ClInclude Include="MathUtils.h" />
     <ClInclude Include="Mesh.h" />
     <ClInclude Include="OFileSerialization.h" />
     <ClInclude Include="Timer.h" />
+    <ClInclude Include="TypesafeHandle.h" />
     <ClInclude Include="VkBootstrap.h" />
     <ClInclude Include="VkInitializers.h" />
     <ClInclude Include="VkTypes.h" />
     <ClInclude Include="vkutils.h" />
+    <ClInclude Include="MemoryUtils.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Dependencies\include\Logger\Logger.cpp" />
     <ClCompile Include="Camera.cpp" />
+    <ClCompile Include="Image.cpp" />
     <ClCompile Include="Mesh.cpp" />
     <ClCompile Include="OFileSerialization.cpp" />
     <ClCompile Include="Timer.cpp" />
@@ -175,6 +179,7 @@
     <ClCompile Include="VkInitializers.cpp" />
     <ClCompile Include="VkTypes.cpp" />
     <ClCompile Include="vkutils.cpp" />
+    <ClCompile Include="MemoryUtils.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -29,4 +29,10 @@ namespace con
 		std::is_trivial_v<T>;
 		std::is_standard_layout_v<T>;
 	};
+
+	template<typename T, typename... Args>
+	concept InvocableWith = requires()
+	{
+		std::is_invocable_v<T, Args...>;
+	};
 }

@@ -117,4 +117,28 @@ namespace vkinit
             .stencilTestEnable = VK_FALSE,
         };
     }
+    VkSamplerCreateInfo samplerCreateInfo(VkFilter filters, VkSamplerAddressMode samplerAdressMode)
+    {
+        return VkSamplerCreateInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = filters,
+            .minFilter = filters,
+            .addressModeU = samplerAdressMode,
+            .addressModeV = samplerAdressMode,
+            .addressModeW = samplerAdressMode
+        };
+    }
+    VkWriteDescriptorSet writeDescriptorImage(VkDescriptorType type, VkDescriptorSet dstSet, VkDescriptorImageInfo *imageInfo, uint32_t binding)
+    {
+        return VkWriteDescriptorSet
+        {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = dstSet,
+            .dstBinding = binding,
+            .descriptorCount = 1,
+            .descriptorType = type,
+            .pImageInfo = imageInfo
+        };
+    }
 }

@@ -1,7 +1,6 @@
 #include "Engine.h"
-#define VMA_IMPLEMENTATION
-#include "VMA/vk_mem_alloc.h"
 #include "VkBootstrap.h"
+#define GLFW_INCLUDE_NONE
 #include "glfw/glfw3.h"
 #include <optional>
 #include "Logger/Logger.h"
@@ -9,24 +8,15 @@
 #include <array>
 #include <MathUtils.h>
 #include <CommonConcepts.h>
-
+#include <MemoryUtils.h>
+#include <Image.h>
 
 #define VKB_CHECK(result, msg) if(!result) {Logger::logErrorFormatted("%s. Cause: %s", msg, result.error().message().c_str()); return; }
-
-#define VK_CHECK(vkOp) 				  													\
-{									  													\
-	VkResult res = vkOp; 		  														\
-	if(res != VK_SUCCESS)				  												\
-	{ 								  													\
-		Logger::logErrorFormatted("Vulkan result was not VK_SUCCESS! Code : %u", res);	\
-		assert(false);																	\
-	}															  						\
-}
-
 #define QUEUE_DESTROY(expr) { mainDeletionQueue.push([=]() { expr; }); }
 
 namespace
 {
+    [[nodiscard]]
     GLFWwindow *createWindow(const char *title, int width, int height)
     {
         glfwInit();
@@ -42,6 +32,7 @@ namespace
         glfwTerminate();
     }
 
+    [[nodiscard]]
     VkSurfaceKHR createSurface(VkInstance instance, GLFWwindow *window)
     {
         VkSurfaceKHR result;
@@ -54,6 +45,7 @@ namespace
         vkDestroySurfaceKHR(instance, surface, nullptr);
     }
 
+    [[nodiscard]]
     std::optional<SwapchainInfo> createSwapchainInfo(VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface)
     {
         vkb::SwapchainBuilder swapchainBuilder(physicalDevice, device, surface);
@@ -79,63 +71,44 @@ namespace
             }
         };
     }
-
-    AllocatedBuffer createBuffer(size_t allocSize, VkBufferUsageFlags usage, VmaAllocator allocator, VmaMemoryUsage memoryUsage)
-    {
-        const VkBufferCreateInfo bufferInfo
-        {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = allocSize,
-            .usage = usage
-        };
-
-        const VmaAllocationCreateInfo vmaallocInfo
-        {
-            .usage = memoryUsage
-        };
-
-        AllocatedBuffer newBuffer;
-
-        //allocate the buffer
-        VK_CHECK(vmaCreateBuffer(allocator, &bufferInfo, &vmaallocInfo,
-            &newBuffer.buffer,
-            &newBuffer.allocation,
-            nullptr));
-
-        return newBuffer;
-    }
-
-    template<typename T>
-    struct UploadInfo
-    {
-        const T *data;
-        VmaAllocator allocator;
-        VmaAllocation allocation;
-        std::optional<size_t> size;
-        size_t offset = 0;
-
-        size_t getSize() const { return size.value_or(sizeof(T)); }
-    };
-
-    template<typename T>
-    void uploadToGPU(UploadInfo<T> info)
-    {
-        char *address;
-        vmaMapMemory(info.allocator, info.allocation, (void**)&address);
-        memcpy(address + info.offset, info.data, info.getSize());
-        vmaUnmapMemory(info.allocator, info.allocation);
-    }
 }
 
-MaterialHandle Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout)
-{
-    const MaterialHandle newHandle = MaterialHandle{ MaterialHandle::nextHandle };
-    MaterialHandle::nextHandle++;
+MaterialHandle Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout, TextureHandle textureHandle)
+{   
+    VkDescriptorSet materialSet{VK_NULL_HANDLE};
+
+    if(textureHandle != TextureHandle::invalidHandle())
+    {
+        const VkDescriptorSetAllocateInfo allocInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = descriptorPool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &singleTextureSetLayout,
+        };
+        vkAllocateDescriptorSets(device, &allocInfo, &materialSet);
+
+        //write to the descriptor set so that it points to our empire_diffuse texture
+        VkDescriptorImageInfo imageBufferInfo
+        {
+            .sampler = blockySampler,
+            .imageView = textures[textureHandle].imageView,
+            .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        };
+
+        VkWriteDescriptorSet write = vkinit::writeDescriptorImage(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSet, &imageBufferInfo, 0);
+
+        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+    }
+
+    const MaterialHandle newHandle = MaterialHandle::getNextHandle();
     materials[newHandle] = Material
     {
+        .textureSet = materialSet,
         .pipeline = pipeline,
-        .pipelineLayout = layout
+        .pipelineLayout = layout,
     };
+    
     return newHandle;
 }
 
@@ -183,24 +156,23 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t object
     mat4x4 projectionMatrix = mat4x4::perspective(perspectiveProjection);
     projectionMatrix.at(1, 1) *= -1.0f;
 
-    GPUCameraData cameraData
+    const GPUCameraData cameraData
     {
         .view = viewMatrix,
         .projection = projectionMatrix,
         .viewProjection = projectionMatrix * viewMatrix
     };
 
-    uploadToGPU<GPUCameraData>({ .data = &cameraData, .allocator = allocator, .allocation = frame.cameraBuffer.allocation });
+    const uint32_t cameraOffset = cameraDataOffset(currentFrameIndex());
+    vkmem::uploadToBuffer<GPUCameraData>({ .data = &cameraData, .buffer = globalBuffer, .offset = cameraOffset});
 
     //slightly more complex than uploadToGPU, essentially copying the transforms of the objects to the mapped pointer
-    GPUObjectData *objectData;
-    vmaMapMemory(allocator, frame.objectsBuffer.allocation, (void**)&objectData);
+    void *objectData = vkmem::getMappedData(frame.objectsBuffer);
     for (int i = 0; i < objectCount; i++)
     {
-        RenderObject &object = first[i];
-        objectData[i].modelMatrix = object.transform;
+        const RenderObject &object = first[i];
+        static_cast<GPUObjectData *>(objectData)[i] = { .modelMatrix = object.transform, .color = object.color };
     }
-    vmaUnmapMemory(allocator, frame.objectsBuffer.allocation);
 
     Mesh* lastMesh = nullptr;
     Material* lastMaterial = nullptr;
@@ -213,9 +185,16 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t object
         {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipeline);
             lastMaterial = object.material;
-            const uint32_t uniform_offset = (uint32_t)(vkut::padUniformBufferSize(sizeof(GPUSceneData), physicalDeviceProperties) * currentFrameIndex());
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 0, 1, &frame.globalDescriptorSet, 1, &uniform_offset);
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 1, 1, &frame.objectsDescriptor, 0, nullptr);
+
+            const uint32_t uniformOffset = static_cast<uint32_t>(sceneDataOffset(currentFrameIndex()));
+            const std::array<uint32_t, 2> offsets = {cameraOffset, uniformOffset};
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 0, 1, &globalDescriptorSet,static_cast<uint32_t>(offsets.size()), offsets.data());
+            
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 1, 1, &frame.objectsDescriptor, 0, nullptr); 
+            if (object.material->textureSet != VK_NULL_HANDLE) {
+                //texture descriptor
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, object.material->pipelineLayout, 2, 1, &object.material->textureSet, 0, nullptr);
+            }
         }
 
         const MeshPushConstants constants
@@ -227,13 +206,13 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t object
 
         //only bind the mesh if its a different one from last bind
         if (object.mesh != lastMesh) {
-            const VkDeviceSize offset = 0;
-            vkCmdBindVertexBuffers(cmd, 0, 1, &object.mesh->vertexBuffer.buffer, &offset);
+            const VkDeviceSize vertexBufferOffset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &object.mesh->vertexBuffer.buffer, &vertexBufferOffset);
             vkCmdBindIndexBuffer(cmd, object.mesh->indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             lastMesh = object.mesh;
         }
-        const VkDeviceSize offset = 0;
-        vkCmdDrawIndexed(cmd, (uint32_t)object.mesh->data.indices().size(), 1, 0, 0, i); //i is passed as firstInstance for the gl_BaseInstance trick
+
+        vkCmdDrawIndexed(cmd, static_cast<uint32_t>(object.mesh->data.indices().size()), 1, 0, 0, i); //i is passed as firstInstance for the gl_BaseInstance trick
     }
 }
 
@@ -259,6 +238,7 @@ Engine::Engine(Camera givenCamera, VkExtent2D givenWindowExtent) : camera(givenC
     initFramebuffers();
     initSyncPrimitives();
     initDescriptors();
+    initSamplers();
     Logger::logMessage("Successfully initialized vulkan resources!");
 
     initialized = true;
@@ -304,14 +284,13 @@ void Engine::draw(Time deltaTime)
 
         sceneParameters.ambientColor = { sin(framed),0,cos(framed),1 };
 
-        const UploadInfo<GPUSceneData> sceneUploadInfo
+        const vkmem::UploadInfo<GPUSceneData> sceneUploadInfo
         {
             .data = &sceneParameters,
-            .allocator = allocator,
-            .allocation = sceneParameterBuffer.allocation,
-            .offset = vkut::padUniformBufferSize(sizeof(GPUSceneData), physicalDeviceProperties) * currentFrameIndex()
+            .buffer = globalBuffer,
+            .offset = sceneDataOffset(currentFrameIndex())
         };
-        uploadToGPU(sceneUploadInfo);
+        vkmem::uploadToBuffer(sceneUploadInfo);
 
         const std::array<VkClearValue, 2> clearValues
         {
@@ -337,7 +316,7 @@ void Engine::draw(Time deltaTime)
                 .offset = {.x = 0, .y = 0},
                 .extent = windowExtent
             },
-            .clearValueCount = (uint32_t)clearValues.size(),
+            .clearValueCount = static_cast<uint32_t>(clearValues.size()),
             .pClearValues = clearValues.data(),
 
         };
@@ -395,7 +374,7 @@ void Engine::initVulkan()
         instanceBuilder.enable_extension(extensions[i]);
     }
 
-    auto instanceResult = instanceBuilder.set_app_name("hello vulkan")
+    const auto instanceResult = instanceBuilder.set_app_name("hello vulkan")
         .set_engine_name("unnamed")
         .require_api_version(1, 2, 0)
 #ifndef NDEBUG
@@ -413,7 +392,7 @@ void Engine::initVulkan()
 
     VKB_CHECK(instanceResult, "Failed to create Vulkan instance");
 
-    vkb::Instance vkbInstance = instanceResult.value();
+    const vkb::Instance vkbInstance = instanceResult.value();
     instance = vkbInstance.instance;
     QUEUE_DESTROY(vkDestroyInstance(instance, nullptr));
 #ifndef NDEBUG
@@ -427,7 +406,7 @@ void Engine::initVulkan()
     QUEUE_DESTROY(destroySurface(instance, surface));
 
     vkb::PhysicalDeviceSelector physicalDeviceSelector{ vkbInstance };
-    auto physicalDeviceResult = physicalDeviceSelector.set_surface(surface)
+    const auto physicalDeviceResult = physicalDeviceSelector.set_surface(surface)
         .set_minimum_version(1, 2) // require a vulkan 1.2 capable device
         .require_dedicated_transfer_queue()
         .prefer_gpu_device_type(vkb::PreferredDeviceType::discrete)
@@ -436,21 +415,21 @@ void Engine::initVulkan()
 
     VKB_CHECK(physicalDeviceResult, "Failed to select Vulkan Physical Device");
 
-    vkb::PhysicalDevice vkbPhysicalDevice = physicalDeviceResult.value();
+    const vkb::PhysicalDevice vkbPhysicalDevice = physicalDeviceResult.value();
     physicalDevice = vkbPhysicalDevice.physical_device;
-
-    vkb::DeviceBuilder deviceBuilder{ vkbPhysicalDevice };
-    auto deviceResult = deviceBuilder.build();
+    
+    const vkb::DeviceBuilder deviceBuilder{ vkbPhysicalDevice };
+    const auto deviceResult = deviceBuilder.build();
     VKB_CHECK(deviceResult, "Failed to create Vulkan device");
-    vkb::Device vkbDevice = deviceResult.value();
+    const vkb::Device vkbDevice = deviceResult.value();
     device = vkbDevice.device;
     QUEUE_DESTROY(vkDestroyDevice(device, nullptr));
 
-    auto graphicsQueueResult = vkbDevice.get_queue(vkb::QueueType::graphics);
+    const auto graphicsQueueResult = vkbDevice.get_queue(vkb::QueueType::graphics);
     VKB_CHECK(graphicsQueueResult, "Failed to get graphics queue");
     graphicsQueue = graphicsQueueResult.value();
 
-    auto graphicsQueueFamilyResult = vkbDevice.get_queue_index(vkb::QueueType::graphics);
+    const auto graphicsQueueFamilyResult = vkbDevice.get_queue_index(vkb::QueueType::graphics);
     VKB_CHECK(graphicsQueueFamilyResult, "Failed to get graphics queue index");
     graphicsQueueFamily = graphicsQueueFamilyResult.value();
 
@@ -460,15 +439,15 @@ void Engine::initVulkan()
         .device = device,
         .instance = instance
     };
-    VK_CHECK(vmaCreateAllocator(&allocatorInfo, &allocator));
-    QUEUE_DESTROY(vmaDestroyAllocator(allocator));
+    VK_CHECK(vkmem::createAllocator(allocatorInfo, allocator));
+    QUEUE_DESTROY(vkmem::destroyAllocator(allocator));
 
     vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
 }
 
 void Engine::initCommands()
 {
-    const VkCommandPoolCreateInfo commandPoolInfo
+    const VkCommandPoolCreateInfo mainCommandPoolInfo
     {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, //we should be able to reset command buffers
@@ -476,7 +455,7 @@ void Engine::initCommands()
     };
     for (FrameData &frame : frames) 
     {
-        VK_CHECK(vkCreateCommandPool(device, &commandPoolInfo, nullptr, &frame.commandPool));
+        VK_CHECK(vkCreateCommandPool(device, &mainCommandPoolInfo, nullptr, &frame.commandPool));
         QUEUE_DESTROY(vkDestroyCommandPool(device, frame.commandPool, nullptr));
 
         //allocate the default command buffer that we will use for rendering
@@ -489,7 +468,14 @@ void Engine::initCommands()
         };
         VK_CHECK(vkAllocateCommandBuffers(device, &commandBufferAllocationInfo, &frame.mainCommandBuffer));
     }
-  
+
+    const VkCommandPoolCreateInfo uploadCommandPoolInfo =
+    {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .queueFamilyIndex = graphicsQueueFamily,
+    };
+    VK_CHECK(vkCreateCommandPool(device, &uploadCommandPoolInfo, nullptr, &uploadCommandPool));
+    QUEUE_DESTROY(vkDestroyCommandPool(device, uploadCommandPool, nullptr););
 }
 
 void Engine::initDefaultRenderpass()
@@ -546,7 +532,7 @@ void Engine::initFramebuffers()
 
 void Engine::initSyncPrimitives()
 {
-    const VkFenceCreateInfo fenceCreateInfo
+    const VkFenceCreateInfo frameFenceCreateInfo
     {
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
         .flags = VK_FENCE_CREATE_SIGNALED_BIT //on creation, will be in signaled state
@@ -560,7 +546,7 @@ void Engine::initSyncPrimitives()
 
     for (FrameData &frame : frames) 
     {
-        VK_CHECK(vkCreateFence(device, &fenceCreateInfo, nullptr, &frame.renderFence));
+        VK_CHECK(vkCreateFence(device, &frameFenceCreateInfo, nullptr, &frame.renderFence));
         QUEUE_DESTROY(vkDestroyFence(device, frame.renderFence, nullptr));
 
         VK_CHECK(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &frame.presentSemaphore));
@@ -568,21 +554,28 @@ void Engine::initSyncPrimitives()
         VK_CHECK(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &frame.renderSemaphore));
         QUEUE_DESTROY(vkDestroySemaphore(device, frame.renderSemaphore, nullptr));
     }
+
+    const VkFenceCreateInfo uploadFenceCreateInfo
+    {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    };
+    VK_CHECK(vkCreateFence(device, &uploadFenceCreateInfo, nullptr, &uploadFence));
+    QUEUE_DESTROY(vkDestroyFence(device, uploadFence, nullptr));
 }
 
-MaterialHandle Engine::createMaterial(const char *vertexModulePath, const char *fragmentModulePath, MeshHandle vertexDescriptionMesh)
+MaterialHandle Engine::loadMaterial(const char *vertexModulePath, const char *fragmentModulePath, MeshHandle vertexDescriptionMesh, TextureHandle textureHandle)
 {
     std::optional<VkShaderModule> vertexModule = vkut::createShaderModule(device, vertexModulePath);
     std::optional<VkShaderModule> fragmentModule = vkut::createShaderModule(device, fragmentModulePath);
     if (!vertexModule.has_value())
     {
-        Logger::logErrorFormatted("Could not load vertex module at path: %s", vertexModulePath);
+        Logger::logErrorFormatted("Could not load vertex module at path \"%s\"", vertexModulePath);
         return MaterialHandle::invalidHandle();
     }
 
     if (!fragmentModule.has_value())
     {
-        Logger::logErrorFormatted("Could not load fragment module at path: %s", fragmentModulePath);
+        Logger::logErrorFormatted("Could not load fragment module at path: \"%s\"", fragmentModulePath);
         vkut::destroyShaderModule(device, vertexModule.value());
         return MaterialHandle::invalidHandle();
     }
@@ -593,7 +586,7 @@ MaterialHandle Engine::createMaterial(const char *vertexModulePath, const char *
         .offset = 0,
         .size = sizeof(MeshPushConstants),
     };
-    const VkPipelineLayout pipelineLayout = vkut::createPipelineLayout(device, { globalSetLayout, objectsSetLayout }, { meshConstants });
+    const VkPipelineLayout pipelineLayout = vkut::createPipelineLayout(device, { globalSetLayout, objectsSetLayout, singleTextureSetLayout }, { meshConstants });
     QUEUE_DESTROY(vkut::destroyPipelineLayout(device, pipelineLayout));
 
     const VertexInputDescription vertexInputDescription = meshes[vertexDescriptionMesh].getDescription();
@@ -610,9 +603,9 @@ MaterialHandle Engine::createMaterial(const char *vertexModulePath, const char *
         .vertexInputInfo
         {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-            .vertexBindingDescriptionCount = (uint32_t)vertexInputDescription.bindings.size(),
+            .vertexBindingDescriptionCount = static_cast<uint32_t>(vertexInputDescription.bindings.size()),
             .pVertexBindingDescriptions = vertexInputDescription.bindings.data(),
-            .vertexAttributeDescriptionCount = (uint32_t)vertexInputDescription.attributes.size(),
+            .vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputDescription.attributes.size()),
             .pVertexAttributeDescriptions = vertexInputDescription.attributes.data(),
         },
         .inputAssembly = vkinit::inputAssemblyCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST),
@@ -620,8 +613,8 @@ MaterialHandle Engine::createMaterial(const char *vertexModulePath, const char *
         {
             .x = .0f,
             .y = .0f,
-            .width = (float)windowExtent.width,
-            .height = (float)windowExtent.height,
+            .width = static_cast<float>(windowExtent.width),
+            .height = static_cast<float>(windowExtent.height),
             .minDepth = .0f,
             .maxDepth = 1.0f
         },
@@ -643,7 +636,9 @@ MaterialHandle Engine::createMaterial(const char *vertexModulePath, const char *
     vkut::destroyShaderModule(device, vertexModule.value());
     vkut::destroyShaderModule(device, fragmentModule.value());
 
-    return createMaterial(pipeline, pipelineLayout);
+    Logger::logMessageFormatted("Successfully loaded material with fragment path \"%s\" and vertex path \"%s\"!", fragmentModulePath, vertexModulePath);
+
+    return createMaterial(pipeline, pipelineLayout, textureHandle);
 }
 
 void Engine::initDepthResources()
@@ -666,8 +661,8 @@ void Engine::initDepthResources()
     };
 
     //allocate and create the image
-    vmaCreateImage(allocator, &depthImageInfo, &depthImageAllocInfo, &depthImage.image, &depthImage.allocation, nullptr);
-    QUEUE_DESTROY(vmaDestroyImage(allocator, depthImage.image, depthImage.allocation));
+    VK_CHECK(vkmem::createImage(allocator, depthImageInfo, depthImageAllocInfo, depthImage, nullptr));
+    QUEUE_DESTROY(vkmem::destroyImage(allocator, depthImage));
 
     //build a image-view for the depth image to use for rendering
     const VkImageViewCreateInfo depthViewInfo = vkinit::imageviewCreateInfo(depthFormat, depthImage.image, VK_IMAGE_ASPECT_DEPTH_BIT);
@@ -678,16 +673,13 @@ void Engine::initDepthResources()
 
 void Engine::initDescriptors()
 {
-    const size_t sceneParamBufferSize = overlappingFrameNumber * vkut::padUniformBufferSize(sizeof(GPUSceneData), physicalDeviceProperties);
-    sceneParameterBuffer = createBuffer(sceneParamBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
-    QUEUE_DESTROY(vmaDestroyBuffer(allocator, sceneParameterBuffer.buffer, sceneParameterBuffer.allocation));
     
     //global set layout
     {
         const VkDescriptorSetLayoutBinding cameraBufferBinding
         {
             .binding = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
             .descriptorCount = 1,
             .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
         };
@@ -714,18 +706,23 @@ void Engine::initDescriptors()
     objectsSetLayout = vkut::createDescriptorSetLayout(device, { objectsBinding });
     QUEUE_DESTROY(vkut::destroyDescriptorSetLayout(device, objectsSetLayout));
 
+    const uint32_t maxDescriptorSets = 10;  //this is an arbitrary big number for now
     const std::vector<VkDescriptorPoolSize> sizes =
     {
         {
             .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 
-            .descriptorCount = 10  //these are arbitrary big numbers for now
+            .descriptorCount = maxDescriptorSets 
         },
         { 
             .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 
-            .descriptorCount = 10 
+            .descriptorCount = maxDescriptorSets
         },
         {
             .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 
+            .descriptorCount = maxDescriptorSets
+        },
+        { 
+            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 
             .descriptorCount = 10 
         }
     };
@@ -734,39 +731,51 @@ void Engine::initDescriptors()
     {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        .maxSets = 30,
-        .poolSizeCount = (uint32_t)sizes.size(),
+        .maxSets = maxDescriptorSets * static_cast<uint32_t>(sizes.size()),
+        .poolSizeCount = static_cast<uint32_t>(sizes.size()),
         .pPoolSizes = sizes.data()
     };
    
     VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
     QUEUE_DESTROY(vkDestroyDescriptorPool(device, descriptorPool, nullptr));
 
+    VkDescriptorSetLayoutBinding textureBinding =
+    {
+        .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+    };
+
+    singleTextureSetLayout = vkut::createDescriptorSetLayout(device, { textureBinding });
+    QUEUE_DESTROY(vkut::destroyDescriptorSetLayout(device, singleTextureSetLayout));
+
+    //global set allocations
+    {
+        const size_t globalBufferSize = cameraDataOffset(overlappingFrameNumber+1);
+        globalBuffer = vkmem::createBuffer(globalBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        QUEUE_DESTROY(vkmem::destroyBuffer(allocator, globalBuffer));
+
+        const VkDescriptorSetAllocateInfo globalAllocationInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = descriptorPool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &globalSetLayout
+        };
+
+        VK_CHECK(vkAllocateDescriptorSets(device, &globalAllocationInfo, &globalDescriptorSet));
+        QUEUE_DESTROY(vkFreeDescriptorSets(device, descriptorPool, 1, &globalDescriptorSet));
+    }
+
     for (uint32_t i = 0; i < overlappingFrameNumber; i++)
     {
         FrameData &currentFrame = frames[i];
         
-        //global set allocations
-        {
-            currentFrame.cameraBuffer = createBuffer(sizeof(GPUCameraData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
-            QUEUE_DESTROY(vmaDestroyBuffer(allocator, currentFrame.cameraBuffer.buffer, currentFrame.cameraBuffer.allocation));
-
-            const VkDescriptorSetAllocateInfo globalAllocationInfo
-            {
-                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-                .descriptorPool = descriptorPool,
-                .descriptorSetCount = 1,
-                .pSetLayouts = &globalSetLayout
-            };
-
-            VK_CHECK(vkAllocateDescriptorSets(device, &globalAllocationInfo, &currentFrame.globalDescriptorSet));
-            QUEUE_DESTROY(vkFreeDescriptorSets(device, descriptorPool, 1, &currentFrame.globalDescriptorSet));
-        }
-        
         //objects set allocations
         {
-            currentFrame.objectsBuffer = createBuffer(sizeof(GPUObjectData) * maxObjects, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
-            QUEUE_DESTROY(vmaDestroyBuffer(allocator, currentFrame.objectsBuffer.buffer, currentFrame.objectsBuffer.allocation));
+            currentFrame.objectsBuffer = vkmem::createBuffer(sizeof(GPUObjectData) * maxObjects, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
+            QUEUE_DESTROY(vkmem::destroyBuffer(allocator, currentFrame.objectsBuffer));
             const VkDescriptorSetAllocateInfo objectsAllocationInfo
             {
                 .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -781,30 +790,30 @@ void Engine::initDescriptors()
 
         const VkDescriptorBufferInfo cameraBufferInfo
         {
-            .buffer = currentFrame.cameraBuffer.buffer,
-            .offset = 0,
+            .buffer = globalBuffer.buffer,
+            .offset = 0, //even though we are offsetting into this buffer, it's done dynamically
             .range = sizeof(GPUCameraData)
         };
         const VkWriteDescriptorSet cameraWrite
         {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = currentFrame.globalDescriptorSet,
+            .dstSet = globalDescriptorSet,
             .dstBinding = 0,
             .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
             .pBufferInfo = &cameraBufferInfo
         };
 
         const VkDescriptorBufferInfo sceneInfo
         {
-            .buffer = sceneParameterBuffer.buffer,
+            .buffer = globalBuffer.buffer,
             .offset = 0, //even though we are offsetting into this buffer, it's done dynamically
             .range = sizeof(GPUSceneData)
         };
         const VkWriteDescriptorSet sceneWrite
         {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = currentFrame.globalDescriptorSet,
+            .dstSet = globalDescriptorSet,
             .dstBinding = 1,
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
@@ -829,38 +838,86 @@ void Engine::initDescriptors()
 
         std::array<VkWriteDescriptorSet, 3> setWrites = { cameraWrite, sceneWrite, objectWrite };
 
-        vkUpdateDescriptorSets(device, (uint32_t)setWrites.size(), setWrites.data(), 0, nullptr); //here we update both descriptor sets at once - this is normal
+        vkUpdateDescriptorSets(device, static_cast<uint32_t>(setWrites.size()), setWrites.data(), 0, nullptr); //here we update both the global and the objects descriptor sets at once - this is normal
     }
+}
+
+void Engine::initSamplers()
+{
+    VkSamplerCreateInfo samplerInfo = vkinit::samplerCreateInfo(VK_FILTER_NEAREST);
+    vkCreateSampler(device, &samplerInfo, nullptr, &blockySampler);
 }
 
 MeshHandle Engine::loadMesh(const char *path)
 {
-    auto loadResult = Mesh::load(path);
-    if (loadResult.has_value())
+    const auto loadResult = Mesh::load(path);
+    if (!loadResult.has_value())
     {
-        const MeshHandle handle = MeshHandle{ MeshHandle::nextHandle };
-        MeshHandle::nextHandle++;
-
-        meshes[handle] = std::move(loadResult.value());
-        uploadMesh(meshes[handle]);
-        return handle;
-    }
-    else
-    {
-        Logger::logErrorFormatted("Couldn't load mesh at path %s!", path);
+        Logger::logErrorFormatted("Failed to load mesh at path \"%s\"!", path);
         return MeshHandle::invalidHandle();
     }
+
+    const MeshHandle handle = MeshHandle::getNextHandle();
+
+    meshes[handle] = loadResult.value();
+    uploadMesh(meshes[handle]);
+    Logger::logMessageFormatted("Successfully loaded mesh at path \"%s\"!", path);
+    return handle;
 }
 
-void Engine::addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform)
+TextureHandle Engine::loadTexture(const char *path)
 {
-    RenderObject object = 
+    const vkut::ImageLoadContext loadContext
     {
-        .mesh = &meshes[mesh],
-        .material = &materials[material],
-        .transform = transform
+        .device = device,
+        .allocator = allocator,
+        .uploadFence = uploadFence,
+        .uploadCommandPool = uploadCommandPool,
+        .queue = graphicsQueue
+    };
+    const std::optional<AllocatedImage> image = vkut::loadImageFromFile(loadContext, path);
+    if(!image.has_value())
+    {
+        Logger::logErrorFormatted("Failed to load texture at path \"%s\"!", path);
+        return TextureHandle::invalidHandle();
+    }
+    
+    VkImageView view = vkut::createImageView(device, image.value().image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+    QUEUE_DESTROY(vkmem::destroyImage(allocator, image.value()));
+    QUEUE_DESTROY(vkut::destroyImageView(device, view));
+
+    TextureHandle handle = TextureHandle::getNextHandle();
+
+    const Texture result = { image.value(), view };
+    textures[handle] = result;
+    Logger::logMessageFormatted("Successfully loaded texture at path \"%s\"!", path);
+    return handle;
+}
+
+void Engine::addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform, vec4 color)
+{
+    auto meshIt = meshes.find(mesh);
+    if(meshIt == meshes.end())
+    {
+        Logger::logErrorFormatted("Could not find mesh for handle %u", static_cast<uint64_t>(mesh));
+        return;
+    }
+    auto materialIt = materials.find(material);
+    if(materialIt == materials.end())
+    {
+        Logger::logErrorFormatted("Could not find material for handle %u", static_cast<uint64_t>(material));
+        return;
+    }
+
+    const RenderObject object = 
+    {
+        .mesh = &(*meshIt).second,
+        .material = &(*materialIt).second,
+        .transform = transform,
+        .color = color
     };
 
+    //sorting by pipeline and then by mesh
     auto pipelineLowerBound = std::lower_bound(renderables.begin(), renderables.end(), object.material->pipeline, [](const RenderObject &ob, VkPipeline pipeline) { return ob.material->pipeline < pipeline; });
     auto meshStart = std::find_if(pipelineLowerBound, renderables.end(), [&object](const RenderObject& ob)
         {
@@ -869,64 +926,75 @@ void Engine::addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 tr
 
     if(meshStart != renderables.end())
     {
-        renderables.insert(meshStart, std::move(object));
+        renderables.insert(meshStart, object);
     } else 
     {
-        renderables.insert(pipelineLowerBound, std::move(object));
+        renderables.insert(pipelineLowerBound, object);
     }
 }
 
 void Engine::uploadMesh(Mesh &mesh)
 {
-    const VkBufferCreateInfo vertexBufferInfo
-    {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = mesh.data.vertexAmount() * mesh.data.vertexSize(),
-        .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
-    };
-
-    const VmaAllocationCreateInfo vmaallocInfo
-    {
-        .usage = VMA_MEMORY_USAGE_CPU_TO_GPU //VMA library: data should be writeable by CPU, but also readable by GPU
-    };
-
-    VK_CHECK(vmaCreateBuffer(allocator, &vertexBufferInfo, &vmaallocInfo,
-        &mesh.vertexBuffer.buffer,
-        &mesh.vertexBuffer.allocation,
-        nullptr));
-
-    QUEUE_DESTROY(vmaDestroyBuffer(allocator, mesh.vertexBuffer.buffer, mesh.vertexBuffer.allocation));
-
-    const UploadInfo<uint8_t> vertexUploadInfo 
-    {
-        .data = mesh.data.vertices().data(), 
-        .allocator = allocator, 
-        .allocation = mesh.vertexBuffer.allocation, 
-        .size = mesh.data.vertexAmount() * mesh.data.vertexSize() 
-    };
-    uploadToGPU(vertexUploadInfo);
-
-    const uint32_t indexBufferSize = (uint32_t)(mesh.data.indices().size() * sizeof(mesh.data.indices()[0]));
-    const VkBufferCreateInfo indexBufferInfo
-    {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = indexBufferSize,
-        .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT
-    };
-
-    VK_CHECK(vmaCreateBuffer(allocator, &indexBufferInfo, &vmaallocInfo,
-        &mesh.indexBuffer.buffer,
-        &mesh.indexBuffer.allocation,
-        nullptr));
-
-    QUEUE_DESTROY(vmaDestroyBuffer(allocator, mesh.indexBuffer.buffer, mesh.indexBuffer.allocation));
+    const VmaMemoryUsage vmaStagingBufferUsage = VMA_MEMORY_USAGE_CPU_ONLY; //on CPU RAM
+    const VmaMemoryUsage vmaBuffersUsage = VMA_MEMORY_USAGE_GPU_ONLY;
     
-    const UploadInfo<uint32_t> indexUploadInfo
+    const vkut::UploadContext uploadContext
     {
-        .data = mesh.data.indices().data(),
-        .allocator = allocator,
-        .allocation = mesh.indexBuffer.allocation,
-        .size = indexBufferSize
+        .device = device,
+        .uploadFence = uploadFence,
+        .commandPool = uploadCommandPool,
+        .queue = graphicsQueue,
     };
-    uploadToGPU(indexUploadInfo);
+
+    //vertex buffer
+    {
+        const uint32_t vertexBufferSize = static_cast<uint32_t>(mesh.data.vertexAmount() * mesh.data.vertexSize());
+
+        AllocatedBuffer vertexStagingBuffer = vkmem::createBuffer(vertexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, allocator, vmaStagingBufferUsage);
+        memcpy(vkmem::getMappedData(vertexStagingBuffer), mesh.data.vertices().data(), vertexBufferSize);
+
+        const VkBufferUsageFlags vkVertexBufferUsage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        mesh.vertexBuffer = vkmem::createBuffer(vertexBufferSize, vkVertexBufferUsage, allocator, vmaBuffersUsage);
+        QUEUE_DESTROY(vkmem::destroyBuffer(allocator, mesh.vertexBuffer));
+
+        vkut::submitCommand(uploadContext,
+            [=](VkCommandBuffer cmd) 
+            {
+                const VkBufferCopy copy
+                {
+                    .srcOffset = 0,
+                    .dstOffset = 0,
+                    .size = vertexBufferSize,
+                };
+                vkCmdCopyBuffer(cmd, vertexStagingBuffer.buffer, mesh.vertexBuffer.buffer, 1, &copy);
+            });
+
+        vkmem::destroyBuffer(allocator, vertexStagingBuffer);
+    }
+    
+    //index buffer
+    {
+        const uint32_t indexBufferSize = static_cast<uint32_t>(mesh.data.indices().size() * sizeof(mesh.data.indices()[0]));
+        
+        AllocatedBuffer indexStagingBuffer = vkmem::createBuffer(indexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, allocator, vmaStagingBufferUsage);
+        memcpy(vkmem::getMappedData(indexStagingBuffer), mesh.data.indices().data(), indexBufferSize);
+
+        const VkBufferUsageFlags vkIndexBufferUsage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        mesh.indexBuffer = vkmem::createBuffer(indexBufferSize, vkIndexBufferUsage, allocator, vmaBuffersUsage);
+        QUEUE_DESTROY(vkmem::destroyBuffer(allocator, mesh.indexBuffer));
+
+        vkut::submitCommand(uploadContext,
+            [=](VkCommandBuffer cmd)
+            {
+                const VkBufferCopy copy
+                {
+                    .srcOffset = 0,
+                    .dstOffset = 0,
+                    .size = indexBufferSize,
+                };
+                vkCmdCopyBuffer(cmd, indexStagingBuffer.buffer, mesh.indexBuffer.buffer, 1, &copy);
+            });
+
+        vkmem::destroyBuffer(allocator, indexStagingBuffer);
+    }
 }

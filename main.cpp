@@ -1,14 +1,14 @@
 #include "Engine.h"
+#define GLFW_INCLUDE_NONE
 #include <glfw/glfw3.h>
 #include <Timer.h>
 #include <MathUtils.h>
 #include <Camera.h>
 
-constexpr const char *monkeyMeshPath = "_assets/models/suzanne.o";
-constexpr const char *dragonMeshPath = "_assets/models/dragon.o";
-constexpr const char *monkeyVertexShaderPath = "_assets/shaders/monkey.vert.spv";
-constexpr const char *dragonVertexShaderPath = "_assets/shaders/dragon.vert.spv";
+constexpr const char *vertexShaderPath = "_assets/shaders/shader.vert.spv";
 constexpr const char *fragmentShaderPath = "_assets/shaders/shader.frag.spv";
+constexpr const char *texturePath = "_assets/textures/minecraft.png";
+constexpr const char *meshPath = "_assets/models/minecraft.o";
 
 Camera camera;
 VkExtent2D windowExtent = { 1700 , 900 };
@@ -72,26 +72,13 @@ int main([[maybe_unused]]int argc, [[maybe_unused]]char *argv[])
     Logger::setVerbosity(Logger::Verbosity::TRIVIAL);
     
     camera = Camera(vec3(.0f, 1.0f, .0f), vec3(.0f, .0f, -1.0f), vec3(.0f, 1.0f, .0f));
-    Engine engine = Engine(camera, windowExtent); //TODO: separate engine from window creation??
+    Engine engine = Engine(camera, windowExtent); //TODO: separate engine from window creation!!
 
-    const MeshHandle monkeyMesh = engine.loadMesh(monkeyMeshPath);
-    const MaterialHandle monkeyMaterial = engine.createMaterial(monkeyVertexShaderPath, fragmentShaderPath, monkeyMesh);
-
-
-    const MeshHandle dragonMesh = engine.loadMesh(dragonMeshPath);
-    const MaterialHandle dragonMaterial = engine.createMaterial(dragonVertexShaderPath, fragmentShaderPath, dragonMesh);
-
+    const MeshHandle mesh = engine.loadMesh(meshPath);
+    const TextureHandle texture = engine.loadTexture(texturePath);
+    const MaterialHandle material = engine.loadMaterial(vertexShaderPath, fragmentShaderPath, mesh, texture);
     
-    engine.addRenderObject(dragonMesh, dragonMaterial, mat4x4::identity());
-    
-    for (int x = -20; x <= 20; x++)
-    for (int y = -20; y <= 20; y++) 
-    {
-        if (x == 0 && y == 0) continue;
-        const mat4x4 translation = mat4x4::translate(vec3((float)x, 0.0f, (float)y));
-        const mat4x4 scale = mat4x4::scale(vec3(0.2f, 0.2f, 0.2f));
-        engine.addRenderObject(monkeyMesh, monkeyMaterial, translation * scale);
-    }
+    engine.addRenderObject(mesh, material, mat4x4::identity(), vec4(1.0f, 1.0f, 1.0f, 1.0f));
 
     glfwSetInputMode(engine.getWindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
     glfwSetKeyCallback(engine.getWindow(), &keyCallback);

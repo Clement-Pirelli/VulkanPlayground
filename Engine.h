@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <Camera.h>
 #include <array>
+#include <TypesafeHandle.h>
 
 struct GLFWwindow;
 
@@ -34,63 +35,23 @@ private:
 
 struct Material 
 {
-	VkPipeline pipeline;
-	VkPipelineLayout pipelineLayout;
+	VkDescriptorSet textureSet{ VK_NULL_HANDLE };
+	VkPipeline pipeline{};
+	VkPipelineLayout pipelineLayout{};
 };
 
-template<typename ID>
-struct EngineResourceHandle
-{
-	constexpr EngineResourceHandle() = default;
-	static constexpr EngineResourceHandle<ID> invalidHandle() { return EngineResourceHandle<ID>{~0U}; };
-	bool operator!=(EngineResourceHandle<ID> h) const
-	{
-		return h.handle != handle;
-	}
-	bool operator==(EngineResourceHandle<ID> h) const
-	{
-		return h.handle == handle;
-	}
 
-	auto operator<=>(EngineResourceHandle<ID> h) const
-	{
-		return h.handle <=> handle;
-	}
-private:
 
-	static uint64_t nextHandle;
-	explicit constexpr EngineResourceHandle(uint64_t givenHandle) : handle(givenHandle) {}	
-	
-	uint64_t handle{};
-
-	friend struct std::hash<EngineResourceHandle<ID>>;
-	friend class Engine;
-};
-
-template<typename ID>
-uint64_t EngineResourceHandle<ID>::nextHandle = { 1 };
-
-namespace std
-{
-	template<typename ID> 
-	struct hash<EngineResourceHandle<ID>>
-	{
-		size_t operator()(EngineResourceHandle<ID> handle) const
-		{
-			//handles are unique, so hashing would be a waste of time
-			return (size_t)handle.handle;
-		}
-	};
-}
-
-using MeshHandle = EngineResourceHandle<struct MeshID>;
-using MaterialHandle = EngineResourceHandle<struct MaterialID>;
+using MeshHandle = TypesafeHandle<struct MeshID>;
+using MaterialHandle = TypesafeHandle<struct MaterialID>;
+using TextureHandle = TypesafeHandle<struct TextureID>;
 
 struct RenderObject
 {
 	Mesh* mesh;
 	Material* material;
 	mat4x4 transform;
+	vec4 color;
 };
 
 struct SwapchainInfo
@@ -121,6 +82,7 @@ constexpr size_t maxObjects = 10'000;
 struct GPUObjectData 
 {
 	mat4x4 modelMatrix;
+	vec4 color;
 };
 
 struct FrameData 
@@ -131,9 +93,6 @@ struct FrameData
 
 	VkCommandPool commandPool;
 	VkCommandBuffer mainCommandBuffer;
-
-	AllocatedBuffer cameraBuffer;
-	VkDescriptorSet globalDescriptorSet;
 
 	AllocatedBuffer objectsBuffer;
 	VkDescriptorSet objectsDescriptor;
@@ -148,12 +107,14 @@ public:
 	Camera camera;
 
 	[[nodiscard]]
-	MaterialHandle createMaterial(const char *vertexModulePath, const char *fragmentModulePath, MeshHandle vertexDescriptionMesh);
+	MaterialHandle loadMaterial(const char *vertexModulePath, const char *fragmentModulePath, MeshHandle vertexDescriptionMesh, TextureHandle texture);
 	[[nodiscard]]
-	MaterialHandle createMaterial(VkPipeline pipeline, VkPipelineLayout layout);
+	MaterialHandle createMaterial(VkPipeline pipeline, VkPipelineLayout layout, TextureHandle textureHandle);
 	[[nodiscard]]
 	MeshHandle loadMesh(const char *path);
-	
+	[[nodiscard]]
+	TextureHandle loadTexture(const char *path);
+
 	[[nodiscard]]
 	Material* getMaterial(MaterialHandle handle);
 	[[nodiscard]]
@@ -161,7 +122,7 @@ public:
 
 	GLFWwindow *getWindow() const;
 	
-	void addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform);
+	void addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform, vec4 color);
 
 	bool shouldQuit() const;
 	
@@ -183,6 +144,7 @@ private:
 	void initSyncPrimitives();
 	void initDepthResources();
 	void initDescriptors();
+	void initSamplers();
 
 	bool initialized = false;
 	size_t frameCount{};
@@ -223,15 +185,26 @@ private:
 	VkDescriptorPool descriptorPool{};
 
 	GPUSceneData sceneParameters{};
-	AllocatedBuffer sceneParameterBuffer{};
+	AllocatedBuffer globalBuffer;
+	size_t globalBufferStride() const { return vkut::padUniformBufferSize(sizeof(GPUSceneData), physicalDeviceProperties) + vkut::padUniformBufferSize(sizeof(GPUCameraData), physicalDeviceProperties); }
+	uint32_t sceneDataOffset(size_t index) const { return cameraDataOffset(index) + static_cast<uint32_t>(vkut::padUniformBufferSize(sizeof(GPUCameraData), physicalDeviceProperties)); }
+	uint32_t cameraDataOffset(size_t index) const { return static_cast<uint32_t>(globalBufferStride() * index); }
+	VkDescriptorSet globalDescriptorSet;
+	VkDescriptorSetLayout singleTextureSetLayout;
 
 	DeletionQueue mainDeletionQueue{};
 
 	std::vector<RenderObject> renderables;
 	std::unordered_map<MaterialHandle, Material> materials;
-	std::unordered_map<MeshHandle, Mesh> meshes;
+	std::unordered_map<MeshHandle, Mesh> meshes; 
+	std::unordered_map<TextureHandle, Texture> textures;
+	//todo: make this an unordered map
+	VkSampler blockySampler;
 
 	VmaAllocator allocator{};
+
+	VkFence uploadFence;
+	VkCommandPool uploadCommandPool;
 
 	void uploadMesh(Mesh &mesh);
 };

@@ -12,3 +12,16 @@ struct AllocatedImage {
     VkImage image;
     VmaAllocation allocation;
 };
+
+//todo: use this for buffer uploads etc
+struct BufferSpan
+{
+    AllocatedBuffer buffer;
+    size_t size;
+    size_t offset;
+};
+
+struct Texture {
+    AllocatedImage image;
+    VkImageView imageView;
+};

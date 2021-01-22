@@ -192,10 +192,6 @@ for %%g in (*.obj) do "$(SolutionDir)AssetCompiler\build\AssetCompiler.exe" -src
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\raw_assets\shaders\dragon.vert" />
-    <None Include="..\raw_assets\shaders\monkey.vert" />
-    <None Include="..\raw_assets\shaders\onecolorShader.frag" />
-    <None Include="..\raw_assets\shaders\onecolorShader.vert" />
     <None Include="..\raw_assets\shaders\shader.frag" />
     <None Include="..\raw_assets\shaders\shader.vert" />
   </ItemGroup>
