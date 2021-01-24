@@ -22,8 +22,9 @@
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
     <ProjectGuid>{4faeb8bd-bd62-47f6-8200-ab044326fa00}</ProjectGuid>
-    <RootNamespace>AssetCompiler</RootNamespace>
+    <RootNamespace>OFileCompiler</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>OFileCompiler</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -74,25 +75,25 @@
     <LinkIncremental>true</LinkIncremental>
     <IncludePath>$(SolutionDir)Dependencies\include\;$(SolutionDir)Common\;$(IncludePath)</IncludePath>
     <ExecutablePath>$(ExecutablePath)</ExecutablePath>
-    <OutDir>$(SolutionDir)AssetCompiler\build\</OutDir>
+    <OutDir>$(SolutionDir)OFileCompiler\build\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
     <IncludePath>$(SolutionDir)Dependencies\include\;$(SolutionDir)Common\;$(IncludePath)</IncludePath>
     <ExecutablePath>$(ExecutablePath)</ExecutablePath>
-    <OutDir>$(SolutionDir)AssetCompiler\build\</OutDir>
+    <OutDir>$(SolutionDir)OFileCompiler\build\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
     <IncludePath>$(SolutionDir)Dependencies\include\;$(SolutionDir)Common\;$(IncludePath)</IncludePath>
     <ExecutablePath>$(ExecutablePath)</ExecutablePath>
-    <OutDir>$(SolutionDir)AssetCompiler\build\</OutDir>
+    <OutDir>$(ProjectDir)build\</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <LinkIncremental>false</LinkIncremental>
     <IncludePath>$(SolutionDir)Dependencies\include\;$(SolutionDir)Common\;$(IncludePath)</IncludePath>
     <ExecutablePath>$(ExecutablePath)</ExecutablePath>
-    <OutDir>$(SolutionDir)AssetCompiler\build\</OutDir>
+    <OutDir>$(SolutionDir)OFileCompiler\build\</OutDir>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -137,14 +138,10 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PostBuildEvent>
-      <Command>cd $(SolutionDir)raw_assets\shaders
-
-for %%i in (*.vert *.frag *.comp) do "glslangValidator.exe" -V "%%~i" -o "$(SolutionDir)_assets\shaders\%%~nxi.spv"
-
-cd $(SolutionDir)raw_assets\models
-
-for %%g in (*.obj) do "$(SolutionDir)AssetCompiler\build\AssetCompiler.exe" -src "%%g"  -dst "$(SolutionDir)_assets\models\%%~ng.o"</Command>
-      <Message>Compiling shaders and models</Message>
+      <Command>
+      </Command>
+      <Message>
+      </Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -164,25 +161,12 @@ for %%g in (*.obj) do "$(SolutionDir)AssetCompiler\build\AssetCompiler.exe" -src
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PostBuildEvent>
-      <Command>cd $(SolutionDir)raw_assets\shaders
-
-for %%i in (*.vert *.frag *.comp) do "glslangValidator.exe" -V "%%~i" -o "$(SolutionDir)_assets\shaders\%%~nxi.spv"
-
-cd $(SolutionDir)raw_assets\models
-
-for %%g in (*.obj) do "$(SolutionDir)AssetCompiler\build\AssetCompiler.exe" -src "%%g"  -dst "$(SolutionDir)_assets\models\%%~ng.o"</Command>
-      <Message>Compiling shaders and models</Message>
+      <Command>
+      </Command>
+      <Message>
+      </Message>
     </PostBuildEvent>
   </ItemDefinitionGroup>
-  <PropertyGroup>
-    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
-  </PropertyGroup>
-  <ItemGroup>
-    <UpToDateCheckInput Include="raw_assets\shaders\*.frag" />
-    <UpToDateCheckInput Include="raw_assets\shaders\*.vert" />
-    <UpToDateCheckInput Include="raw_assets\shaders\*.comp" />
-    <UpToDateCheckInput Include="raw_assets\models\*.obj" />
-  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Common\Common.vcxproj">
       <Project>{665d49e8-0647-415f-bc1e-127ca72b8e73}</Project>
@@ -190,10 +174,6 @@ for %%g in (*.obj) do "$(SolutionDir)AssetCompiler\build\AssetCompiler.exe" -src
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="..\raw_assets\shaders\shader.frag" />
-    <None Include="..\raw_assets\shaders\shader.vert" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

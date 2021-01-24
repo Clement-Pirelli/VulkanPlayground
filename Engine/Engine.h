@@ -107,13 +107,13 @@ public:
 	Camera camera;
 
 	[[nodiscard]]
-	MaterialHandle loadMaterial(const char *vertexModulePath, const char *fragmentModulePath, MeshHandle vertexDescriptionMesh, TextureHandle texture);
+	MaterialHandle loadMaterial(const char *vertexModuleName, const char *fragmentModuleName, MeshHandle vertexDescriptionMesh, TextureHandle texture);
 	[[nodiscard]]
 	MaterialHandle createMaterial(VkPipeline pipeline, VkPipelineLayout layout, TextureHandle textureHandle);
 	[[nodiscard]]
-	MeshHandle loadMesh(const char *path);
+	MeshHandle loadMesh(const char *name);
 	[[nodiscard]]
-	TextureHandle loadTexture(const char *path);
+	TextureHandle loadTexture(const char *name);
 
 	[[nodiscard]]
 	Material* getMaterial(MaterialHandle handle);

@@ -5,22 +5,22 @@
 #include <MathUtils.h>
 #include <Camera.h>
 
-constexpr const char *vertexShaderPath = "_assets/shaders/shader.vert.spv";
-constexpr const char *fragmentShaderPath = "_assets/shaders/shader.frag.spv";
-constexpr const char *texturePath = "_assets/textures/minecraft.png";
-constexpr const char *meshPath = "_assets/models/minecraft.o";
+constexpr const char *vertexShaderPath = "shader.vert.spv";
+constexpr const char *fragmentShaderPath = "shader.frag.spv";
+constexpr const char *texturePath = "minecraft.png";
+constexpr const char *meshPath = "minecraft.o";
 
 Camera camera;
 VkExtent2D windowExtent = { 1700 , 900 };
-vec2 lastCursorPos = { windowExtent.width/2.0f, windowExtent.height/2.0f};
+vec2 lastCursorPos = { windowExtent.width/2.0f, windowExtent.height/2.0f}; 
 void mouseCallback(GLFWwindow *window, double xpos, double ypos)
 {
-    const vec2 offset =
+    const vec2 offset = 
     {
          (float)xpos - lastCursorPos.x(),
          lastCursorPos.y() - (float)ypos  // reversed since y-coordinates range from bottom to top
     };
-    lastCursorPos = { (float)xpos, (float)ypos };
+    lastCursorPos = { (float)xpos, (float)ypos }; 
 
     camera.onMouseMovement(offset);
 }
@@ -72,12 +72,12 @@ int main([[maybe_unused]]int argc, [[maybe_unused]]char *argv[])
     Logger::setVerbosity(Logger::Verbosity::TRIVIAL);
     
     camera = Camera(vec3(.0f, 1.0f, .0f), vec3(.0f, .0f, -1.0f), vec3(.0f, 1.0f, .0f));
-    Engine engine = Engine(camera, windowExtent); //TODO: separate engine from window creation!!
+    Engine engine = Engine(camera, windowExtent); //TODO: separate engine from window creation!!!
 
     const MeshHandle mesh = engine.loadMesh(meshPath);
     const TextureHandle texture = engine.loadTexture(texturePath);
     const MaterialHandle material = engine.loadMaterial(vertexShaderPath, fragmentShaderPath, mesh, texture);
-    
+
     engine.addRenderObject(mesh, material, mat4x4::identity(), vec4(1.0f, 1.0f, 1.0f, 1.0f));
 
     glfwSetInputMode(engine.getWindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);

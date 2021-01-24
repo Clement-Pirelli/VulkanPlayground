@@ -10,12 +10,19 @@
 #include <CommonConcepts.h>
 #include <MemoryUtils.h>
 #include <Image.h>
+#include <string>
 
 #define VKB_CHECK(result, msg) if(!result) {Logger::logErrorFormatted("%s. Cause: %s", msg, result.error().message().c_str()); return; }
 #define QUEUE_DESTROY(expr) { mainDeletionQueue.push([=]() { expr; }); }
 
 namespace
-{
+{   
+    constexpr const char *assetsFolderPath = "../_assets/"; //TODO: put this stuff in its own file!
+    std::string getTexturePath(const char *textureName) { return (std::string(assetsFolderPath) + "textures/") + textureName; }
+    std::string getShaderPath(const char *shaderName) { return (std::string(assetsFolderPath) + "shaders/") + shaderName; }
+    std::string getModelPath(const char *modelName) { return (std::string(assetsFolderPath) + "models/") + modelName; }
+
+
     [[nodiscard]]
     GLFWwindow *createWindow(const char *title, int width, int height)
     {
@@ -563,10 +570,12 @@ void Engine::initSyncPrimitives()
     QUEUE_DESTROY(vkDestroyFence(device, uploadFence, nullptr));
 }
 
-MaterialHandle Engine::loadMaterial(const char *vertexModulePath, const char *fragmentModulePath, MeshHandle vertexDescriptionMesh, TextureHandle textureHandle)
+MaterialHandle Engine::loadMaterial(const char *vertexModuleName, const char *fragmentModuleName, MeshHandle vertexDescriptionMesh, TextureHandle textureHandle)
 {
-    std::optional<VkShaderModule> vertexModule = vkut::createShaderModule(device, vertexModulePath);
-    std::optional<VkShaderModule> fragmentModule = vkut::createShaderModule(device, fragmentModulePath);
+    const std::string vertexModulePath = getShaderPath(vertexModuleName);
+    const std::string fragmentModulePath = getShaderPath(fragmentModuleName);
+    const std::optional<VkShaderModule> vertexModule = vkut::createShaderModule(device, vertexModulePath.c_str());
+    const std::optional<VkShaderModule> fragmentModule = vkut::createShaderModule(device, fragmentModulePath.c_str());
     if (!vertexModule.has_value())
     {
         Logger::logErrorFormatted("Could not load vertex module at path \"%s\"", vertexModulePath);
@@ -848,12 +857,13 @@ void Engine::initSamplers()
     vkCreateSampler(device, &samplerInfo, nullptr, &blockySampler);
 }
 
-MeshHandle Engine::loadMesh(const char *path)
+MeshHandle Engine::loadMesh(const char *name)
 {
-    const auto loadResult = Mesh::load(path);
+    const std::string path = getModelPath(name);
+    const auto loadResult = Mesh::load(path.c_str());
     if (!loadResult.has_value())
     {
-        Logger::logErrorFormatted("Failed to load mesh at path \"%s\"!", path);
+        Logger::logErrorFormatted("Failed to load mesh at path \"%s\"!", path.c_str());
         return MeshHandle::invalidHandle();
     }
 
@@ -861,12 +871,13 @@ MeshHandle Engine::loadMesh(const char *path)
 
     meshes[handle] = loadResult.value();
     uploadMesh(meshes[handle]);
-    Logger::logMessageFormatted("Successfully loaded mesh at path \"%s\"!", path);
+    Logger::logMessageFormatted("Successfully loaded mesh at path \"%s\"!", path.c_str());
     return handle;
 }
 
-TextureHandle Engine::loadTexture(const char *path)
+TextureHandle Engine::loadTexture(const char *name)
 {
+    const std::string path = getTexturePath(name);
     const vkut::ImageLoadContext loadContext
     {
         .device = device,
@@ -875,10 +886,10 @@ TextureHandle Engine::loadTexture(const char *path)
         .uploadCommandPool = uploadCommandPool,
         .queue = graphicsQueue
     };
-    const std::optional<AllocatedImage> image = vkut::loadImageFromFile(loadContext, path);
+    const std::optional<AllocatedImage> image = vkut::loadImageFromFile(loadContext, path.c_str());
     if(!image.has_value())
     {
-        Logger::logErrorFormatted("Failed to load texture at path \"%s\"!", path);
+        Logger::logErrorFormatted("Failed to load texture at path \"%s\"!", path.c_str());
         return TextureHandle::invalidHandle();
     }
     
