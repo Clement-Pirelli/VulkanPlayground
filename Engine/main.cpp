@@ -4,6 +4,8 @@
 #include <Timer.h>
 #include <MathUtils.h>
 #include <Camera.h>
+#include <imgui/imgui_impl_glfw.h>
+#include <imgui/imgui_impl_vulkan.h>
 
 constexpr const char *vertexShaderPath = "shader.vert.spv";
 constexpr const char *fragmentShaderPath = "shader.frag.spv";
@@ -31,7 +33,6 @@ bool cursorDisabled = true;
 void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 {
     const bool direction = (action == GLFW_PRESS || action == GLFW_REPEAT);
-
     switch (key)
     {
     case GLFW_KEY_ESCAPE:
@@ -87,12 +88,18 @@ int main([[maybe_unused]]int argc, [[maybe_unused]]char *argv[])
     Time endTime = Time::now();
     do
     {
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        ImGui::ShowDemoWindow();
+
         glfwPollEvents();
         const Time deltaTime = Time::now() - endTime;
         camera.handleMovement(deltaTime, directions);
         engine.camera = camera;
         engine.draw(deltaTime);
         endTime = Time::now();
+
     } while (!engine.shouldQuit());
 
     return 0;

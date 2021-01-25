@@ -58,6 +58,7 @@ struct SwapchainInfo
 {
 	VkSwapchainKHR swapchain{};
 	VkFormat format{};
+	VkExtent2D extent{};
 	std::vector<VkImage> images{};
 	std::vector<VkImageView> imageViews{};
 };
@@ -121,6 +122,7 @@ public:
 	Mesh *getMesh(MeshHandle handle);
 
 	GLFWwindow *getWindow() const;
+	vec2 getWindowSize() const;
 	
 	void addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform, vec4 color);
 
@@ -138,13 +140,16 @@ private:
 	FrameData &currentFrame() { return frames[currentFrameIndex()]; }
 
 	void initVulkan();
+	void initImgui();
 	void initCommands();
 	void initDefaultRenderpass();
-	void initFramebuffers();
+	void initFramebuffers(bool recreating = false);
 	void initSyncPrimitives();
-	void initDepthResources();
+	void initDepthResources(bool recreating = false);
 	void initDescriptors();
 	void initSamplers();
+
+	void onResize();
 
 	bool initialized = false;
 	size_t frameCount{};

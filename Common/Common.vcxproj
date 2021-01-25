@@ -152,6 +152,9 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="..\Dependencies\include\Files.h" />
+    <ClInclude Include="..\Dependencies\include\imgui\imgui.h" />
+    <ClInclude Include="..\Dependencies\include\imgui\imgui_impl_glfw.h" />
+    <ClInclude Include="..\Dependencies\include\imgui\imgui_impl_vulkan.h" />
     <ClInclude Include="..\Dependencies\include\Logger\Logger.h" />
     <ClInclude Include="AttributeType.h" />
     <ClInclude Include="Camera.h" />
@@ -169,6 +172,13 @@
     <ClInclude Include="MemoryUtils.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui.cpp" />
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_demo.cpp" />
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_draw.cpp" />
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_impl_glfw.cpp" />
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_impl_vulkan.cpp" />
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_tables.cpp" />
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_widgets.cpp" />
     <ClCompile Include="..\Dependencies\include\Logger\Logger.cpp" />
     <ClCompile Include="Camera.cpp" />
     <ClCompile Include="Image.cpp" />

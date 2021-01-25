@@ -97,10 +97,8 @@ namespace vkut {
 		VkPipelineDepthStencilStateCreateInfo depth;
 		VkPipelineMultisampleStateCreateInfo multisampling;
 		VkPipelineLayout pipelineLayout;
+		const VkPipelineDynamicStateCreateInfo* dynamicState;
 	};
-
-	VkPipeline createPipeline(const PipelineInfo& pipelineInfo);
-	void destroyPipeline(VkDevice device, VkPipeline pipeline);
 
 	[[nodiscard]]
 	VkPipelineLayout createPipelineLayout(VkDevice device, const std::vector<VkDescriptorSetLayout> &descriptorSetLayouts, const std::vector<VkPushConstantRange> &pushConstantRanges);

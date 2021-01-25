@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Resource Files\imgui">
+      <UniqueIdentifier>{8bd04da9-51f2-4d7a-9768-c1c1d2db7b97}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Dependencies\include\Files.h">
@@ -20,9 +23,6 @@
     </ClInclude>
     <ClInclude Include="..\Dependencies\include\Logger\Logger.h">
       <Filter>Resource Files</Filter>
-    </ClInclude>
-    <ClInclude Include="VkBootstrap.h">
-      <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="VkInitializers.h">
       <Filter>Header Files</Filter>
@@ -63,13 +63,22 @@
     <ClInclude Include="MemoryUtils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="VkBootstrap.h">
+      <Filter>Resource Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Dependencies\include\imgui\imgui.h">
+      <Filter>Resource Files\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Dependencies\include\imgui\imgui_impl_glfw.h">
+      <Filter>Resource Files\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Dependencies\include\imgui\imgui_impl_vulkan.h">
+      <Filter>Resource Files\imgui</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Dependencies\include\Logger\Logger.cpp">
       <Filter>Resource Files</Filter>
-    </ClCompile>
-    <ClCompile Include="VkBootstrap.cpp">
-      <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="VkInitializers.cpp">
       <Filter>Source Files</Filter>
@@ -97,6 +106,30 @@
     </ClCompile>
     <ClCompile Include="MemoryUtils.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="VkBootstrap.cpp">
+      <Filter>Resource Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui.cpp">
+      <Filter>Resource Files\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_draw.cpp">
+      <Filter>Resource Files\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_impl_glfw.cpp">
+      <Filter>Resource Files\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_impl_vulkan.cpp">
+      <Filter>Resource Files\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_widgets.cpp">
+      <Filter>Resource Files\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_tables.cpp">
+      <Filter>Resource Files\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_demo.cpp">
+      <Filter>Resource Files\imgui</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

@@ -12,8 +12,14 @@
 #include <Image.h>
 #include <string>
 
+//imgui
+#include <imgui/imgui.h>
+#include <imgui/imgui_impl_glfw.h>
+#include <imgui/imgui_impl_vulkan.h>
+
 #define VKB_CHECK(result, msg) if(!result) {Logger::logErrorFormatted("%s. Cause: %s", msg, result.error().message().c_str()); return; }
 #define QUEUE_DESTROY(expr) { mainDeletionQueue.push([=]() { expr; }); }
+#define QUEUE_DESTROY_REF(expr){ mainDeletionQueue.push([&](){ expr; }); }
 
 namespace
 {   
@@ -73,6 +79,7 @@ namespace
             {
                 .swapchain = vkbSwapchain.swapchain,
                 .format = vkbSwapchain.image_format,
+                .extent = vkbSwapchain.extent,
                 .images = vkbSwapchain.get_images().value(),
                 .imageViews = vkbSwapchain.get_image_views().value()
             }
@@ -146,6 +153,14 @@ Mesh *Engine::getMesh(MeshHandle handle)
 GLFWwindow *Engine::getWindow() const
 {
     return window;
+}
+
+vec2 Engine::getWindowSize() const
+{
+    int x, y;
+    glfwGetWindowSize(window, &x, &y);
+
+    return vec2((float)x, (float)y);
 }
 
 void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t objectCount)
@@ -236,7 +251,7 @@ Engine::Engine(Camera givenCamera, VkExtent2D givenWindowExtent) : camera(givenC
     if (swapChainResult.has_value())
     {
         swapchainInfo = swapChainResult.value();
-        QUEUE_DESTROY(vkDestroySwapchainKHR(device, swapchainInfo.swapchain, nullptr));
+        QUEUE_DESTROY_REF(vkDestroySwapchainKHR(device, swapchainInfo.swapchain, nullptr));
     }
     initDepthResources();
 
@@ -246,6 +261,7 @@ Engine::Engine(Camera givenCamera, VkExtent2D givenWindowExtent) : camera(givenC
     initSyncPrimitives();
     initDescriptors();
     initSamplers();
+    initImgui();
     Logger::logMessage("Successfully initialized vulkan resources!");
 
     initialized = true;
@@ -264,16 +280,29 @@ Engine::~Engine()
 
 void Engine::draw(Time deltaTime)
 {
+    ImGui::Render();
     constexpr bool waitAll = true;
-    constexpr uint64_t oneSecondTimeoutInNS = 1000000000;
+    constexpr uint64_t bigTimeout = 1000000000;
     FrameData &frame = currentFrame();
 
-    VK_CHECK(vkWaitForFences(device, 1, &frame.renderFence, waitAll, oneSecondTimeoutInNS));
+    VK_CHECK(vkWaitForFences(device, 1, &frame.renderFence, waitAll, bigTimeout));
     VK_CHECK(vkResetFences(device, 1, &frame.renderFence));
 
     //note we give presentSemaphore to the swapchain, it'll be signaled when the swapchain is ready to give the next image
     uint32_t swapchainImageIndex;
-    VK_CHECK(vkAcquireNextImageKHR(device, swapchainInfo.swapchain, oneSecondTimeoutInNS, frame.presentSemaphore, nullptr, &swapchainImageIndex));
+    do {
+        const VkResult result = vkAcquireNextImageKHR(device, swapchainInfo.swapchain, bigTimeout, frame.presentSemaphore, nullptr, &swapchainImageIndex);
+        if (result == VK_ERROR_OUT_OF_DATE_KHR)
+        {
+            onResize();
+            continue; //try again
+        }
+        if (result != VK_SUBOPTIMAL_KHR)
+        {
+            VK_CHECK(result);
+        }
+    } while (false);
+
 
     //begin recording the command buffer after resetting it safely (it isn't being used anymore since we acquired the next image)
     VK_CHECK(vkResetCommandBuffer(frame.mainCommandBuffer, 0));
@@ -286,6 +315,26 @@ void Engine::draw(Time deltaTime)
 
     VK_CHECK(vkBeginCommandBuffer(frame.mainCommandBuffer, &commandBufferBeginInfo));
     {
+        const VkViewport viewport
+        {
+            .x = .0f,
+            .y = .0f,
+            .width = static_cast<float>(windowExtent.width),
+            .height = static_cast<float>(windowExtent.height),
+            .minDepth = .0f,
+            .maxDepth = 1.0f
+        };
+
+        const VkRect2D scissor
+        {
+            .offset = {0,0},
+            .extent = windowExtent
+        };
+
+        vkCmdSetViewport(frame.mainCommandBuffer, 0, 1, &viewport);
+        vkCmdSetScissor(frame.mainCommandBuffer, 0, 1, &scissor);
+        
+
         const float flash = (float)abs(sin(frameCount / 120.f));
         const float framed = (frameCount / 120.f);
 
@@ -331,6 +380,7 @@ void Engine::draw(Time deltaTime)
         vkCmdBeginRenderPass(frame.mainCommandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
         {
             drawObjects(frame.mainCommandBuffer, renderables.data(), renderables.size());
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), frame.mainCommandBuffer);
         }
         vkCmdEndRenderPass(frame.mainCommandBuffer);
     }
@@ -364,7 +414,17 @@ void Engine::draw(Time deltaTime)
         .pImageIndices = &swapchainImageIndex
     };
 
-    VK_CHECK(vkQueuePresentKHR(graphicsQueue, &presentInfo));
+    //check whether we need to resize
+    const VkResult presentResult = vkQueuePresentKHR(graphicsQueue, &presentInfo);
+    const vec2 swapchainExtents{ (float)swapchainInfo.extent.width, (float)swapchainInfo.extent.height };
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || getWindowSize() != swapchainExtents)
+    {
+        onResize();
+    }
+    else
+    {
+        VK_CHECK(presentResult);
+    }
 
 
     frameCount++;
@@ -452,6 +512,69 @@ void Engine::initVulkan()
     vkGetPhysicalDeviceProperties(physicalDevice, &physicalDeviceProperties);
 }
 
+void Engine::initImgui()
+{
+    
+    std::array<VkDescriptorPoolSize, 11> poolSizes =
+    {
+        VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_SAMPLER,                   .descriptorCount = 1000 }, // overkill but eh
+        VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,    .descriptorCount = 1000 },
+        VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,             .descriptorCount = 1000 },
+        VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,             .descriptorCount = 1000 },
+        VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,      .descriptorCount = 1000 },
+        VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,      .descriptorCount = 1000 },
+        VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,            .descriptorCount = 1000 },
+        VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,            .descriptorCount = 1000 },
+        VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,    .descriptorCount = 1000 },
+        VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC,    .descriptorCount = 1000 },
+        VkDescriptorPoolSize { .type = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,          .descriptorCount = 1000 }
+    };
+
+    const VkDescriptorPoolCreateInfo poolInfo
+    {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+        .maxSets = 1000,
+        .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+        .pPoolSizes = poolSizes.data()
+    };
+
+    VkDescriptorPool imguiPool;
+    VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &imguiPool));
+    QUEUE_DESTROY(vkDestroyDescriptorPool(device, imguiPool, nullptr));
+    ImGui::CreateContext();
+
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+
+    ImGui_ImplVulkan_InitInfo initInfo
+    {
+        .Instance = instance,
+        .PhysicalDevice = physicalDevice,
+        .Device = device,
+        .Queue = graphicsQueue,
+        .DescriptorPool = imguiPool,
+        .MinImageCount = 3,
+        .ImageCount = 3
+    };
+    ImGui_ImplVulkan_Init(&initInfo, renderPass);
+
+    const vkut::UploadContext uploadContext
+    {
+        .device = device,
+        .uploadFence = uploadFence,
+        .commandPool = uploadCommandPool,
+        .queue = graphicsQueue
+    };
+    vkut::submitCommand(uploadContext, [](VkCommandBuffer cmd)
+        {
+            ImGui_ImplVulkan_CreateFontsTexture(cmd); //upload fonts
+        });
+
+    ImGui_ImplVulkan_DestroyFontUploadObjects(); //clear up fonts from cpu
+
+    QUEUE_DESTROY(ImGui_ImplVulkan_Shutdown());
+}
+
 void Engine::initCommands()
 {
     const VkCommandPoolCreateInfo mainCommandPoolInfo
@@ -516,7 +639,7 @@ void Engine::initDefaultRenderpass()
     QUEUE_DESTROY(vkut::destroyRenderPass(device, renderPass));
 }
 
-void Engine::initFramebuffers()
+void Engine::initFramebuffers(bool recreating)
 {
     const size_t swapchainImageCount = swapchainInfo.images.size();
     framebuffers.resize(swapchainImageCount);
@@ -532,8 +655,15 @@ void Engine::initFramebuffers()
             .depthAttachment = depthImageView
         };
         framebuffers[i] = vkut::createRenderPassFramebuffer(framebufferInfo);
-        QUEUE_DESTROY(vkut::destroyFramebuffer(device, framebuffers[i]));
-        QUEUE_DESTROY(vkut::destroyImageView(device, swapchainInfo.imageViews[i]));
+    }
+
+    if (!recreating)
+    {
+        mainDeletionQueue.push([&]()
+        {
+            for (VkFramebuffer framebuffer : framebuffers) vkut::destroyFramebuffer(device, framebuffer);
+            for (VkImageView imageView : swapchainInfo.imageViews) vkut::destroyImageView(device, imageView);
+        });
     }
 }
 
@@ -598,59 +728,90 @@ MaterialHandle Engine::loadMaterial(const char *vertexModuleName, const char *fr
     const VkPipelineLayout pipelineLayout = vkut::createPipelineLayout(device, { globalSetLayout, objectsSetLayout, singleTextureSetLayout }, { meshConstants });
     QUEUE_DESTROY(vkut::destroyPipelineLayout(device, pipelineLayout));
 
+    const std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages = {
+        vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, vertexModule.value()),
+        vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, fragmentModule.value())
+    };
     const VertexInputDescription vertexInputDescription = meshes[vertexDescriptionMesh].getDescription();
-
-    const vkut::PipelineInfo pipelineInfo
+    const VkPipelineVertexInputStateCreateInfo vertexInputStateCreateInfo
     {
-        .device = device,
-        .pass = renderPass,
-        .shaderStages
-        {
-            vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, vertexModule.value()),
-            vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, fragmentModule.value())
-        },
-        .vertexInputInfo
-        {
-            .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-            .vertexBindingDescriptionCount = static_cast<uint32_t>(vertexInputDescription.bindings.size()),
-            .pVertexBindingDescriptions = vertexInputDescription.bindings.data(),
-            .vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputDescription.attributes.size()),
-            .pVertexAttributeDescriptions = vertexInputDescription.attributes.data(),
-        },
-        .inputAssembly = vkinit::inputAssemblyCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST),
-        .viewport
-        {
-            .x = .0f,
-            .y = .0f,
-            .width = static_cast<float>(windowExtent.width),
-            .height = static_cast<float>(windowExtent.height),
-            .minDepth = .0f,
-            .maxDepth = 1.0f
-        },
-        .scissor
-        {
-            .offset = {0,0},
-            .extent = windowExtent
-        },
-        .rasterizer = vkinit::rasterizationStateCreateInfo(VK_POLYGON_MODE_FILL),
-        .colorBlendAttachment = vkinit::colorBlendAttachmentState(),
-        .depth = vkinit::depthStencilCreateInfo(true, true, VK_COMPARE_OP_LESS_OR_EQUAL),
-        .multisampling = vkinit::multisamplingCreateInfo(),
-        .pipelineLayout = pipelineLayout,
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = static_cast<uint32_t>(vertexInputDescription.bindings.size()),
+        .pVertexBindingDescriptions = vertexInputDescription.bindings.data(),
+        .vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputDescription.attributes.size()),
+        .pVertexAttributeDescriptions = vertexInputDescription.attributes.data(),
+    };
+    const VkPipelineInputAssemblyStateCreateInfo inputAssemblyStateCreateInfo = vkinit::inputAssemblyCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    const VkPipelineRasterizationStateCreateInfo rasterizerStateCreateInfo = vkinit::rasterizationStateCreateInfo(VK_POLYGON_MODE_FILL);
+    
+    const VkPipelineDepthStencilStateCreateInfo depthStencilStateCreateInfo = vkinit::depthStencilCreateInfo(true, true, VK_COMPARE_OP_LESS_OR_EQUAL);
+    const VkPipelineMultisampleStateCreateInfo multisamplingStateCreateInfo = vkinit::multisamplingCreateInfo();
+
+    const VkPipelineViewportStateCreateInfo viewportState
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1,
+        .scissorCount = 1,
+        //no need to set viewport and scissor - this is done dynamically
     };
 
-    const VkPipeline pipeline = vkut::createPipeline(pipelineInfo);
-    QUEUE_DESTROY(vkut::destroyPipeline(device, pipeline));
+    //setup dummy color blending. We arent using transparent objects yet
+    //the blending is just "no blend", but we do write to the color attachment
+    const VkPipelineColorBlendAttachmentState colorBlendAttachment = vkinit::colorBlendAttachmentState();
+    const VkPipelineColorBlendStateCreateInfo colorBlending
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .logicOpEnable = VK_FALSE,
+        .logicOp = VK_LOGIC_OP_COPY,
+        .attachmentCount = 1,
+        .pAttachments = &colorBlendAttachment,
+    };
+
+    const std::array<VkDynamicState, 2> dynamicStates
+    {
+        VK_DYNAMIC_STATE_VIEWPORT, //so we don't have to recreate the pipelines on swapchain recreation
+        VK_DYNAMIC_STATE_SCISSOR,
+    };
+
+    const VkPipelineDynamicStateCreateInfo dynamicStateCreateInfo
+    {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+        .pDynamicStates = dynamicStates.data(),
+    };
+
+    VkGraphicsPipelineCreateInfo pipelineCreateInfo
+    {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .stageCount = (uint32_t)shaderStages.size(),
+        .pStages = shaderStages.data(),
+        .pVertexInputState = &vertexInputStateCreateInfo,
+        .pInputAssemblyState = &inputAssemblyStateCreateInfo,
+        .pViewportState = &viewportState,
+        .pRasterizationState = &rasterizerStateCreateInfo,
+        .pMultisampleState = &multisamplingStateCreateInfo,
+        .pDepthStencilState = &depthStencilStateCreateInfo,
+        .pColorBlendState = &colorBlending,
+        .pDynamicState = &dynamicStateCreateInfo,
+        .layout = pipelineLayout,
+        .renderPass = renderPass,
+        .subpass = 0,
+    };
+
+    //its easy to error out on create graphics pipeline, so we handle it a bit better than the common VK_CHECK case
+    VkPipeline pipeline;
+    VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline));
+    QUEUE_DESTROY(vkDestroyPipeline(device, pipeline, nullptr));
 
     vkut::destroyShaderModule(device, vertexModule.value());
     vkut::destroyShaderModule(device, fragmentModule.value());
 
-    Logger::logMessageFormatted("Successfully loaded material with fragment path \"%s\" and vertex path \"%s\"!", fragmentModulePath, vertexModulePath);
+    Logger::logMessageFormatted("Successfully loaded material with fragment path \"%s\" and vertex path \"%s\"!", fragmentModulePath.c_str(), vertexModulePath.c_str());
 
     return createMaterial(pipeline, pipelineLayout, textureHandle);
 }
 
-void Engine::initDepthResources()
+void Engine::initDepthResources(bool recreating)
 {
     const VkExtent3D depthImageExtent 
     {
@@ -669,15 +830,18 @@ void Engine::initDepthResources()
         .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
     };
 
-    //allocate and create the image
     VK_CHECK(vkmem::createImage(allocator, depthImageInfo, depthImageAllocInfo, depthImage, nullptr));
-    QUEUE_DESTROY(vkmem::destroyImage(allocator, depthImage));
 
-    //build a image-view for the depth image to use for rendering
     const VkImageViewCreateInfo depthViewInfo = vkinit::imageviewCreateInfo(depthFormat, depthImage.image, VK_IMAGE_ASPECT_DEPTH_BIT);
 
     VK_CHECK(vkCreateImageView(device, &depthViewInfo, nullptr, &depthImageView));
-    QUEUE_DESTROY(vkDestroyImageView(device, depthImageView, nullptr));
+
+    if(!recreating)
+    {
+        QUEUE_DESTROY_REF(vkmem::destroyImage(allocator, depthImage));
+        QUEUE_DESTROY_REF(vkDestroyImageView(device, depthImageView, nullptr));
+    }
+
 }
 
 void Engine::initDescriptors()
@@ -854,7 +1018,32 @@ void Engine::initDescriptors()
 void Engine::initSamplers()
 {
     VkSamplerCreateInfo samplerInfo = vkinit::samplerCreateInfo(VK_FILTER_NEAREST);
-    vkCreateSampler(device, &samplerInfo, nullptr, &blockySampler);
+    VK_CHECK(vkCreateSampler(device, &samplerInfo, nullptr, &blockySampler));
+    QUEUE_DESTROY(vkDestroySampler(device, blockySampler, nullptr));
+}
+
+void Engine::onResize()
+{
+    vkDeviceWaitIdle(device);
+
+    for (uint32_t i = 0; i < swapchainInfo.images.size(); i++) {
+        vkut::destroyFramebuffer(device, framebuffers[i]);
+        vkut::destroyImageView(device, swapchainInfo.imageViews[i]);
+    }
+    vkDestroySwapchainKHR(device, swapchainInfo.swapchain, nullptr);
+    vkmem::destroyImage(allocator, depthImage);
+    vkDestroyImageView(device, depthImageView, nullptr);
+
+    auto swapChainResult = createSwapchainInfo(physicalDevice, device, surface);
+    if (swapChainResult.has_value())
+    {
+        swapchainInfo = swapChainResult.value();
+    }
+    windowExtent = swapchainInfo.extent;
+
+    constexpr bool recreating = true;
+    initDepthResources(recreating);
+    initFramebuffers(recreating);
 }
 
 MeshHandle Engine::loadMesh(const char *name)
@@ -901,7 +1090,7 @@ TextureHandle Engine::loadTexture(const char *name)
 
     const Texture result = { image.value(), view };
     textures[handle] = result;
-    Logger::logMessageFormatted("Successfully loaded texture at path \"%s\"!", path);
+    Logger::logMessageFormatted("Successfully loaded texture at path \"%s\"!", path.c_str());
     return handle;
 }
 
