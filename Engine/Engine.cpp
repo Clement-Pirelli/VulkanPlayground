@@ -59,19 +59,23 @@ namespace
     }
 
     [[nodiscard]]
-    std::optional<SwapchainInfo> createSwapchainInfo(VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface)
+    std::optional<SwapchainInfo> createSwapchainInfo(VkPhysicalDevice physicalDevice, VkDevice device, VkSurfaceKHR surface, VkSwapchainKHR oldSwapchain = VK_NULL_HANDLE)
     {
         vkb::SwapchainBuilder swapchainBuilder(physicalDevice, device, surface);
-        auto swapchainResult = swapchainBuilder
-            .set_desired_present_mode(VkPresentModeKHR::VK_PRESENT_MODE_FIFO_KHR)
-            .build();
+        swapchainBuilder.set_desired_present_mode(VkPresentModeKHR::VK_PRESENT_MODE_FIFO_KHR);
+        if(oldSwapchain != VK_NULL_HANDLE)
+        {
+            swapchainBuilder.set_old_swapchain(oldSwapchain);
+        }
+
+        auto swapchainResult = swapchainBuilder.build();
 
         if (!swapchainResult) {
             Logger::logErrorFormatted("Failed to create swapchain. Cause %s\n",
                 swapchainResult.error().message().c_str());
             return std::nullopt;
         }
-        vkb::Swapchain vkbSwapchain = swapchainResult.value();
+        vkb::Swapchain& vkbSwapchain = swapchainResult.value();
 
         return 
         {
@@ -1029,16 +1033,19 @@ void Engine::onResize()
     for (uint32_t i = 0; i < swapchainInfo.images.size(); i++) {
         vkut::destroyFramebuffer(device, framebuffers[i]);
         vkut::destroyImageView(device, swapchainInfo.imageViews[i]);
-    }
-    vkDestroySwapchainKHR(device, swapchainInfo.swapchain, nullptr);
+    }    
     vkmem::destroyImage(allocator, depthImage);
     vkDestroyImageView(device, depthImageView, nullptr);
 
-    auto swapChainResult = createSwapchainInfo(physicalDevice, device, surface);
+    VkSwapchainKHR oldSwapchain = swapchainInfo.swapchain;
+
+    auto swapChainResult = createSwapchainInfo(physicalDevice, device, surface, oldSwapchain); //"moves" the old swapchain
     if (swapChainResult.has_value())
     {
         swapchainInfo = swapChainResult.value();
     }
+    vkDestroySwapchainKHR(device, oldSwapchain, nullptr); 
+
     windowExtent = swapchainInfo.extent;
 
     constexpr bool recreating = true;
