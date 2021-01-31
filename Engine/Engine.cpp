@@ -11,13 +11,15 @@
 #include <MemoryUtils.h>
 #include <Image.h>
 #include <string>
+#include <Camera.h>
+#include <Window.h>
 
 //imgui
 #include <imgui/imgui.h>
 #include <imgui/imgui_impl_glfw.h>
 #include <imgui/imgui_impl_vulkan.h>
 
-#define VKB_CHECK(result, msg) if(!result) {Logger::logErrorFormatted("%s. Cause: %s", msg, result.error().message().c_str()); return; }
+#define VKB_CHECK(result, msg) if(!result) { Logger::logErrorFormatted("%s. Cause: %s", msg, result.error().message().c_str()); return; }
 #define QUEUE_DESTROY(expr) { mainDeletionQueue.push([=]() { expr; }); }
 #define QUEUE_DESTROY_REF(expr){ mainDeletionQueue.push([&](){ expr; }); }
 
@@ -28,28 +30,11 @@ namespace
     std::string getShaderPath(const char *shaderName) { return (std::string(assetsFolderPath) + "shaders/") + shaderName; }
     std::string getModelPath(const char *modelName) { return (std::string(assetsFolderPath) + "models/") + modelName; }
 
-
     [[nodiscard]]
-    GLFWwindow *createWindow(const char *title, int width, int height)
-    {
-        glfwInit();
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        GLFWwindow *window = glfwCreateWindow(width, height, title, NULL, NULL);
-        assert(window != NULL);
-        return window;
-    }
-
-    void destroyWindow(GLFWwindow *window)
-    {
-        glfwDestroyWindow(window);
-        glfwTerminate();
-    }
-
-    [[nodiscard]]
-    VkSurfaceKHR createSurface(VkInstance instance, GLFWwindow *window)
+    VkSurfaceKHR createSurface(VkInstance instance, Window &window)
     {
         VkSurfaceKHR result;
-        glfwCreateWindowSurface(instance, window, nullptr, &result);
+        glfwCreateWindowSurface(instance, window.get(), nullptr, &result);
         return result;
     }
 
@@ -93,7 +78,7 @@ namespace
 
 MaterialHandle Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout, TextureHandle textureHandle)
 {   
-    VkDescriptorSet materialSet{VK_NULL_HANDLE};
+    VkDescriptorSet materialSet{ VK_NULL_HANDLE };
 
     if(textureHandle != TextureHandle::invalidHandle())
     {
@@ -114,7 +99,7 @@ MaterialHandle Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layo
             .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
         };
 
-        VkWriteDescriptorSet write = vkinit::writeDescriptorImage(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSet, &imageBufferInfo, 0);
+        const VkWriteDescriptorSet write = vkinit::writeDescriptorImage(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSet, &imageBufferInfo, 0);
 
         vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
     }
@@ -154,20 +139,7 @@ Mesh *Engine::getMesh(MeshHandle handle)
     }
 }
 
-GLFWwindow *Engine::getWindow() const
-{
-    return window;
-}
-
-vec2 Engine::getWindowSize() const
-{
-    int x, y;
-    glfwGetWindowSize(window, &x, &y);
-
-    return vec2((float)x, (float)y);
-}
-
-void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t objectCount)
+void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t objectCount, const Camera& camera)
 {
     FrameData &frame = currentFrame();
     const mat4x4 viewMatrix = camera.calculateViewMatrix();
@@ -175,7 +147,7 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t object
     const mat4x4::PerspectiveProjection perspectiveProjection
     {
         .fovX = math::degToRad(70.0f),
-        .aspectRatio = (float)(windowExtent.width / windowExtent.height),
+        .aspectRatio = windowExtent.width / static_cast<float>(windowExtent.height),
         .zfar = 200.0f,
         .znear = .01f,
     }; 
@@ -242,13 +214,11 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t object
     }
 }
 
-bool Engine::shouldQuit() const
+Engine::Engine(Window& givenWindow) : window(givenWindow)
 {
-    return glfwWindowShouldClose(window);
-}
+    ivec2 windowSize = window.resolution();
+    windowExtent = { .width = (uint32_t)windowSize.x(), .height = (uint32_t)windowSize.y() };
 
-Engine::Engine(Camera givenCamera, VkExtent2D givenWindowExtent) : camera(givenCamera), windowExtent(givenWindowExtent)
-{
     initVulkan();
 
     auto swapChainResult = createSwapchainInfo(physicalDevice, device, surface);
@@ -282,9 +252,9 @@ Engine::~Engine()
     }
 }
 
-void Engine::draw(Time deltaTime)
+void Engine::draw(Time deltaTime, const Camera& camera)
 {
-    ImGui::Render();
+    if(settings.renderUI) ImGui::Render();
     constexpr bool waitAll = true;
     constexpr uint64_t bigTimeout = 1000000000;
     FrameData &frame = currentFrame();
@@ -383,8 +353,8 @@ void Engine::draw(Time deltaTime)
 
         vkCmdBeginRenderPass(frame.mainCommandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
         {
-            drawObjects(frame.mainCommandBuffer, renderables.data(), renderables.size());
-            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), frame.mainCommandBuffer);
+            drawObjects(frame.mainCommandBuffer, renderables.data(), renderables.size(), camera);
+            if(settings.renderUI) ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), frame.mainCommandBuffer);
         }
         vkCmdEndRenderPass(frame.mainCommandBuffer);
     }
@@ -420,8 +390,10 @@ void Engine::draw(Time deltaTime)
 
     //check whether we need to resize
     const VkResult presentResult = vkQueuePresentKHR(graphicsQueue, &presentInfo);
-    const vec2 swapchainExtents{ (float)swapchainInfo.extent.width, (float)swapchainInfo.extent.height };
-    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || getWindowSize() != swapchainExtents)
+    const ivec2 swapchainExtents{ (int)swapchainInfo.extent.width, (int)swapchainInfo.extent.height };
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR
+        || presentResult == VK_SUBOPTIMAL_KHR 
+        || window.resolution() != swapchainExtents)
     {
         onResize();
     }
@@ -471,8 +443,6 @@ void Engine::initVulkan()
     QUEUE_DESTROY(vkb::destroy_debug_utils_messenger(instance, debugMessenger));
 #endif
 
-    window = createWindow("Hello Vulkan", windowExtent.width, windowExtent.height);
-    QUEUE_DESTROY(destroyWindow(window));
     surface = createSurface(instance, window);
     QUEUE_DESTROY(destroySurface(instance, surface));
 
@@ -548,7 +518,7 @@ void Engine::initImgui()
     QUEUE_DESTROY(vkDestroyDescriptorPool(device, imguiPool, nullptr));
     ImGui::CreateContext();
 
-    ImGui_ImplGlfw_InitForVulkan(window, true);
+    ImGui_ImplGlfw_InitForVulkan(window.get(), true);
 
     ImGui_ImplVulkan_InitInfo initInfo
     {
@@ -756,7 +726,7 @@ MaterialHandle Engine::loadMaterial(const char *vertexModuleName, const char *fr
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
         .viewportCount = 1,
         .scissorCount = 1,
-        //no need to set viewport and scissor - this is done dynamically
+        //no need to set viewport and scissor - this is done dynamically during command buffer recording
     };
 
     //setup dummy color blending. We arent using transparent objects yet

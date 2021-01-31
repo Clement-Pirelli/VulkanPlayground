@@ -28,9 +28,9 @@ struct squaremat
 	inline float at(size_t x, size_t y) const { return elements[x + y * N]; }
 	inline float &at(size_t x, size_t y) { return elements[x + y * N]; }
 
-	inline vec<N> columnAt(size_t x) const
+	inline vec<float, N> columnAt(size_t x) const
 	{
-		vec<N> result = {};
+		vec<float, N> result = {};
 		for (size_t i = 0; i < N; i++)
 		{
 			result[i] = at(x, i);
@@ -38,9 +38,9 @@ struct squaremat
 		return result;
 	}
 
-	inline vec<N> rowAt(size_t y) const
+	inline vec<float, N> rowAt(size_t y) const
 	{
-		vec<N> result = {};
+		vec<float, N> result = {};
 		for (size_t i = 0; i < N; i++)
 		{
 			result[i] = at(i, y);
@@ -55,15 +55,15 @@ struct squaremat
 		for (size_t y = 0; y < N; y++)
 			for (size_t x = 0; x < N; x++)
 			{
-				result.at(x, y) = vec<N>::dot(rowAt(y), other.columnAt(x));
+				result.at(x, y) = vec<float, N>::dot(rowAt(y), other.columnAt(x));
 			}
 
 		return result;
 	}
 
-	vec<N> operator *(const vec<N> &v) const
+	vec<float, N> operator *(const vec<float, N> &v) const
 	{
-		vec<N> result = {};
+		vec<float, N> result = {};
 		for (size_t rowIndex = 0; rowIndex < N; rowIndex++)
 		{
 			for (size_t elementIndex = 0; elementIndex < N; elementIndex++)
@@ -267,19 +267,29 @@ struct squaremat
 	};
 	static mat4x4 perspective(const PerspectiveProjection &projection) requires (N == 4)
 	{
-		const float fovY = projection.fovX * projection.aspectRatio;
-		const float halfFovY = fovY * .5f;
-		const float halfFovX = projection.fovX * .5f;
+		const float halfFOV = tanf(projection.fovX * .5f);
 
 		const float m33 = -((projection.zfar + projection.znear) / (projection.zfar - projection.znear));
 		const float m43 = -(2.0f * (projection.zfar * projection.znear) / (projection.zfar - projection.znear));
 
-		return mat4x4({
-			1.0f / atanf(halfFovX), .0f, .0f, .0f,
-			.0f, 1.0f / atanf(halfFovY), .0f, .0f,
+		if(projection.aspectRatio < 1.0f)
+		{
+			return mat4x4({
+			1.0f / halfFOV, .0f, .0f, .0f,
+			.0f, 1.0f / (halfFOV / projection.aspectRatio), .0f, .0f,
 			.0f, .0f, m33, m43,
 			.0f, .0f, -1.0f, 1.0f
-			});
+				});
+		}
+		else 
+		{
+			return mat4x4({
+			1.0f / (halfFOV * projection.aspectRatio), .0f, .0f, .0f,
+			.0f, 1.0f / halfFOV, .0f, .0f,
+			.0f, .0f, m33, m43,
+			.0f, .0f, -1.0f, 1.0f
+				});
+		}
 	};
 
 	struct OrthographicProjection

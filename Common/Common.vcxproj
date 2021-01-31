@@ -170,15 +170,37 @@
     <ClInclude Include="VkTypes.h" />
     <ClInclude Include="vkutils.h" />
     <ClInclude Include="MemoryUtils.h" />
+    <ClInclude Include="Window.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\Dependencies\include\imgui\imgui.cpp" />
-    <ClCompile Include="..\Dependencies\include\imgui\imgui_demo.cpp" />
-    <ClCompile Include="..\Dependencies\include\imgui\imgui_draw.cpp" />
-    <ClCompile Include="..\Dependencies\include\imgui\imgui_impl_glfw.cpp" />
-    <ClCompile Include="..\Dependencies\include\imgui\imgui_impl_vulkan.cpp" />
-    <ClCompile Include="..\Dependencies\include\imgui\imgui_tables.cpp" />
-    <ClCompile Include="..\Dependencies\include\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="..\Dependencies\include\imgui\imgui.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_demo.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_draw.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_impl_glfw.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_impl_vulkan.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_tables.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\imgui\imgui_widgets.cpp">
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">TurnOffAllWarnings</WarningLevel>
+      <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
     <ClCompile Include="..\Dependencies\include\Logger\Logger.cpp" />
     <ClCompile Include="Camera.cpp" />
     <ClCompile Include="Image.cpp" />
@@ -190,6 +212,7 @@
     <ClCompile Include="VkTypes.cpp" />
     <ClCompile Include="vkutils.cpp" />
     <ClCompile Include="MemoryUtils.cpp" />
+    <ClCompile Include="Window.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

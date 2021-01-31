@@ -1,20 +1,21 @@
 #pragma once
 #pragma warning (disable: 26812)
-#include <vector>
 #include "VkTypes.h"
 #include "VkInitializers.h"
-#include <deque>
-#include <functional>
 #include <Mesh.h>
 #include <mat.h>
 #include <vec.h>
 #include <Timer.h>
-#include <unordered_map>
-#include <Camera.h>
-#include <array>
 #include <TypesafeHandle.h>
 
-struct GLFWwindow;
+#include <deque>
+#include <functional>
+#include <unordered_map>
+#include <array>
+#include <vector>
+
+class Camera;
+class Window;
 
 struct DeletionQueue
 {
@@ -39,8 +40,6 @@ struct Material
 	VkPipeline pipeline{};
 	VkPipelineLayout pipelineLayout{};
 };
-
-
 
 using MeshHandle = TypesafeHandle<struct MeshID>;
 using MaterialHandle = TypesafeHandle<struct MaterialID>;
@@ -79,7 +78,7 @@ struct GPUSceneData
 	 vec4 sunlightColor;
 };
 
-constexpr size_t maxObjects = 10'000;
+constexpr size_t maxObjects = 10'000; //todo: make this dynamic
 struct GPUObjectData 
 {
 	mat4x4 modelMatrix;
@@ -99,13 +98,13 @@ struct FrameData
 	VkDescriptorSet objectsDescriptor;
 };
 
+ 
+
 constexpr uint32_t overlappingFrameNumber = 2;
 
 class Engine
 {
 public:
-
-	Camera camera;
 
 	[[nodiscard]]
 	MaterialHandle loadMaterial(const char *vertexModuleName, const char *fragmentModuleName, MeshHandle vertexDescriptionMesh, TextureHandle texture);
@@ -120,19 +119,20 @@ public:
 	Material* getMaterial(MaterialHandle handle);
 	[[nodiscard]]
 	Mesh *getMesh(MeshHandle handle);
-
-	GLFWwindow *getWindow() const;
-	vec2 getWindowSize() const;
 	
 	void addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform, vec4 color);
-
-	bool shouldQuit() const;
 	
-	void draw(Time deltaTime);
-	void drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count);
+	void draw(Time deltaTime, const Camera& camera);
+	void drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count, const Camera& camera);
 
-	Engine(Camera givenCamera, VkExtent2D givenWindowExtent);
+	Engine(Window& window);
 	~Engine();
+
+	struct
+	{
+		bool renderUI = true;
+	} settings;
+
 private:
 
 	std::array<FrameData, overlappingFrameNumber> frames;
@@ -158,7 +158,7 @@ private:
 #ifndef NDEBUG
 	VkDebugUtilsMessengerEXT debugMessenger{};
 #endif
-	GLFWwindow *window{};
+	Window &window;
 	VkSurfaceKHR surface{};
 	VkPhysicalDevice physicalDevice{};
 	VkPhysicalDeviceProperties physicalDeviceProperties{};
@@ -203,7 +203,7 @@ private:
 	std::unordered_map<MaterialHandle, Material> materials;
 	std::unordered_map<MeshHandle, Mesh> meshes; 
 	std::unordered_map<TextureHandle, Texture> textures;
-	//todo: make this an unordered map
+	//todo: make this an unordered map of samplers, create as they're asked
 	VkSampler blockySampler;
 
 	VmaAllocator allocator{};

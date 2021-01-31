@@ -20,17 +20,7 @@ namespace vkut {
 #define VK_SET_FUNC_PTR(device, func) (setFunctionPointer(device, func, #func))
 
 
-		template <class T>
-		T min(const T &a, const T &b)
-		{
-			return (a < b) ? a : b;
-		}
-
-		template <class T>
-		T max(const T &a, const T &b)
-		{
-			return (a > b) ? a : b;
-		}
+		
 #pragma endregion
 
 		VkFormat findSupportedFormat(VkPhysicalDevice physicalDevice, const std::vector<VkFormat> &candidates, VkImageTiling tiling, VkFormatFeatureFlags features)
@@ -66,46 +56,6 @@ namespace vkut {
 			Logger::logError("Failed to find suitable memory type!");
 			assert(false);
 			return ~0U;
-		}
-
-		VkCommandBuffer initSingleTimeCommands(VkDevice device, VkCommandPool commandPool) 
-		{
-			const VkCommandBufferAllocateInfo allocInfo 
-			{
-				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-				.commandPool = commandPool,
-				.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-				.commandBufferCount = 1,
-			};
-
-			VkCommandBuffer commandBufferData = {};
-			vkAllocateCommandBuffers(device, &allocInfo, &commandBufferData);
-
-			const VkCommandBufferBeginInfo beginInfo 
-			{
-				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-				.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
-			};
-
-			vkBeginCommandBuffer(commandBufferData, &beginInfo);
-
-			return commandBufferData;
-		}
-
-		void submitSingleTimeCommands(VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer, VkQueue queue) {
-			vkEndCommandBuffer(commandBuffer);
-
-			const VkSubmitInfo submitInfo
-			{
-				.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-				.commandBufferCount = 1,
-				.pCommandBuffers = &commandBuffer
-			};
-
-			vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
-			vkQueueWaitIdle(queue);
-
-			vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 		}
 
 		uint64_t GetBufferAddress(VkDevice device, VkBuffer buffer)
@@ -348,7 +298,6 @@ namespace vkut {
 	}
 
 	VkPipelineLayout createPipelineLayout(
-
 		VkDevice device,
 		const std::vector<VkDescriptorSetLayout> &descriptorSetLayouts,
 		const std::vector<VkPushConstantRange> &pushConstantRanges)
@@ -451,7 +400,6 @@ namespace vkut {
 		Logger::logMessageFormatted("Destroyed render pass %u! ", renderPass);
 	}
 
-
 	VkImageView createImageView(
 		VkDevice device,
 		VkImage image,
@@ -465,7 +413,8 @@ namespace vkut {
 			.image = image,
 			.viewType = VK_IMAGE_VIEW_TYPE_2D,
 			.format = format,
-			.subresourceRange = {
+			.subresourceRange = 
+			{
 				.aspectMask = aspectFlags,
 				.baseMipLevel = 0,
 				.levelCount = mipLevels,

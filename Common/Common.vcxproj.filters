@@ -75,6 +75,9 @@
     <ClInclude Include="..\Dependencies\include\imgui\imgui_impl_vulkan.h">
       <Filter>Resource Files\imgui</Filter>
     </ClInclude>
+    <ClInclude Include="Window.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Dependencies\include\Logger\Logger.cpp">
@@ -130,6 +133,9 @@
     </ClCompile>
     <ClCompile Include="..\Dependencies\include\imgui\imgui_demo.cpp">
       <Filter>Resource Files\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="Window.cpp">
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

@@ -6,6 +6,7 @@
 #include <Camera.h>
 #include <imgui/imgui_impl_glfw.h>
 #include <imgui/imgui_impl_vulkan.h>
+#include <Window.h>
 
 constexpr const char *vertexShaderPath = "shader.vert.spv";
 constexpr const char *fragmentShaderPath = "shader.frag.spv";
@@ -13,8 +14,10 @@ constexpr const char *texturePath = "minecraft.png";
 constexpr const char *meshPath = "minecraft.o";
 
 Camera camera;
-VkExtent2D windowExtent = { 1700 , 900 };
-vec2 lastCursorPos = { windowExtent.width/2.0f, windowExtent.height/2.0f}; 
+ivec2 windowStartingResolution = { 1700 , 900 };
+vec2 lastCursorPos = { windowStartingResolution.x()/2.0f, windowStartingResolution.y()/2.0f};
+Directions directions{};
+bool cursorDisabled = true;
 void mouseCallback(GLFWwindow *window, double xpos, double ypos)
 {
     const vec2 offset = 
@@ -24,15 +27,14 @@ void mouseCallback(GLFWwindow *window, double xpos, double ypos)
     };
     lastCursorPos = { (float)xpos, (float)ypos }; 
 
-    camera.onMouseMovement(offset);
+    if(cursorDisabled) camera.onMouseMovement(offset);
 }
 
-Directions directions{};
-bool cursorDisabled = true;
 //todo: clean this up
 void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 {
-    const bool direction = (action == GLFW_PRESS || action == GLFW_REPEAT);
+    Engine *engine = reinterpret_cast<Engine*>(glfwGetWindowUserPointer(window));
+    const bool pressing = (action == GLFW_PRESS || action == GLFW_REPEAT);
     switch (key)
     {
     case GLFW_KEY_ESCAPE:
@@ -48,59 +50,71 @@ void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods
     } break;
     case GLFW_KEY_S:
     {
-        directions.backwards = direction;
+        directions.backwards = pressing;
     } break;
 
     case GLFW_KEY_A:
     {
-        directions.left = direction;
+        directions.left = pressing;
     } break;
 
     case GLFW_KEY_W:
     { 
-        directions.forwards = direction;
+        directions.forwards = pressing;
     } break;
 
     case GLFW_KEY_D:
     {
-        directions.right = direction;
+        directions.right = pressing;
+    } break;
+    case GLFW_KEY_SPACE:
+    {
+        if(action == GLFW_PRESS) engine->settings.renderUI = !engine->settings.renderUI;
     } break;
     }
 }
 
 int main([[maybe_unused]]int argc, [[maybe_unused]]char *argv[])
 {
-    Logger::setVerbosity(Logger::Verbosity::TRIVIAL);
-    
-    camera = Camera(vec3(.0f, 1.0f, .0f), vec3(.0f, .0f, -1.0f), vec3(.0f, 1.0f, .0f));
-    Engine engine = Engine(camera, windowExtent); //TODO: separate engine from window creation!!!
-
-    const MeshHandle mesh = engine.loadMesh(meshPath);
-    const TextureHandle texture = engine.loadTexture(texturePath);
-    const MaterialHandle material = engine.loadMaterial(vertexShaderPath, fragmentShaderPath, mesh, texture);
-
-    engine.addRenderObject(mesh, material, mat4x4::identity(), vec4(1.0f, 1.0f, 1.0f, 1.0f));
-
-    glfwSetInputMode(engine.getWindow(), GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-    glfwSetKeyCallback(engine.getWindow(), &keyCallback);
-    glfwSetCursorPosCallback(engine.getWindow(), mouseCallback);
-
-    Time endTime = Time::now();
-    do
+    glfwInit();
     {
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-        ImGui::ShowDemoWindow();
+        Window window = Window(windowStartingResolution, "Engine");
+        Logger::setVerbosity(Logger::Verbosity::TRIVIAL);
 
-        glfwPollEvents();
-        const Time deltaTime = Time::now() - endTime;
-        camera.handleMovement(deltaTime, directions);
-        engine.camera = camera;
-        engine.draw(deltaTime);
-        endTime = Time::now();
+        camera = Camera(vec3(.0f, 1.0f, .0f), vec3(.0f, .0f, -1.0f), vec3(.0f, 1.0f, .0f));
+        Engine engine = Engine(window);
 
-    } while (!engine.shouldQuit());
+        const MeshHandle mesh = engine.loadMesh(meshPath);
+        const TextureHandle texture = engine.loadTexture(texturePath);
+        const MaterialHandle material = engine.loadMaterial(vertexShaderPath, fragmentShaderPath, mesh, texture);
 
+        engine.addRenderObject(mesh, material, mat4x4::identity(), vec4(1.0f, 1.0f, 1.0f, 1.0f));
+
+        window.setCursorCallback(mouseCallback);
+        window.setKeyCallback(keyCallback);
+        window.setCursorMode(CursorMode::disabled);
+        window.setUserData(&engine);
+
+        Time endTime = Time::now();
+        do
+        {
+            if (engine.settings.renderUI)
+            {
+                ImGui_ImplVulkan_NewFrame();
+                ImGui_ImplGlfw_NewFrame();
+                ImGui::NewFrame();
+                ImGui::ShowDemoWindow();
+            }
+
+            glfwPollEvents();
+            const Time deltaTime = Time::now() - endTime;
+            camera.handleMovement(deltaTime, directions);
+            engine.draw(deltaTime, camera);
+            endTime = Time::now();
+
+        } while (!window.shouldClose());
+
+    }
+    glfwTerminate();
     return 0;
 }

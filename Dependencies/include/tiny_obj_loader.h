@@ -52,7 +52,9 @@ THE SOFTWARE.
 //   #define TINYOBJLOADER_IMPLEMENTATION
 //   #include "tiny_obj_loader.h"
 //
-#pragma system_header
+
+#pragma warning(push, 0)
+
 #ifndef TINY_OBJ_LOADER_H_
 #define TINY_OBJ_LOADER_H_
 
@@ -2925,3 +2927,5 @@ bool ObjReader::ParseFromString(const std::string &obj_text,
 }  // namespace tinyobj
 
 #endif
+
+#pragma warning(pop)
