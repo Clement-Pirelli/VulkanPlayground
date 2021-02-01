@@ -60,6 +60,7 @@ struct SwapchainInfo
 	VkExtent2D extent{};
 	std::vector<VkImage> images{};
 	std::vector<VkImageView> imageViews{};
+	uint32_t lastAcquiredImageIndex;
 };
 
 struct GPUCameraData 
@@ -71,8 +72,6 @@ struct GPUCameraData
 
 struct GPUSceneData 
 {
-	 vec4 example1;
-	 vec4 example2;
 	 vec4 ambientColor;
 	 vec4 sunlightDirection; //w for sun power
 	 vec4 sunlightColor;
@@ -99,7 +98,6 @@ struct FrameData
 };
 
  
-
 constexpr uint32_t overlappingFrameNumber = 2;
 
 class Engine
@@ -122,7 +120,8 @@ public:
 	
 	void addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform, vec4 color);
 	
-	void draw(Time deltaTime, const Camera& camera);
+	void drawToScreen(Time deltaTime, const Camera& camera);
+	void drawToBuffer(Time deltaTime, const Camera& camera, std::byte* data, size_t count);
 	void drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count, const Camera& camera);
 
 	Engine(Window& window);
@@ -170,11 +169,6 @@ private:
 
 	SwapchainInfo swapchainInfo{};
 
-	struct MeshPushConstants {
-		vec4 data;
-		mat4x4 renderMatrix;
-	};
-
 	VkExtent2D windowExtent{};
 
 	VkRenderPass renderPass{};
@@ -205,6 +199,8 @@ private:
 	std::unordered_map<TextureHandle, Texture> textures;
 	//todo: make this an unordered map of samplers, create as they're asked
 	VkSampler blockySampler;
+
+	vkut::UploadContext getUploadContext() const;
 
 	VmaAllocator allocator{};
 

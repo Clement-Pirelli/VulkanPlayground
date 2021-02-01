@@ -35,4 +35,17 @@ namespace con
 	{
 		std::is_invocable_v<T, Args...>;
 	};
+
+	template<typename T>
+	concept Arithmetic = requires(T a, T b)
+	{
+		Same<decltype(a + b), T>;
+		Same<decltype(a - b), T>;
+		Same<decltype(a / b), T>;
+		Same<decltype(a * b), T>;
+		Same<std::remove_reference_t<decltype(a += b)>, T>;
+		Same<std::remove_reference_t<decltype(a -= b)>, T>;
+		Same<std::remove_reference_t<decltype(a /= b)>, T>;
+		Same<std::remove_reference_t<decltype(a *= b)>, T>;
+	};
 }

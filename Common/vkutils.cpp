@@ -122,6 +122,153 @@ namespace vkut {
 		}
 	}
 
+	enum class LayoutTransitionType
+	{
+		invalid,
+		toTransfer,
+		toDepthAttachment,
+		fromTransferDstToShaderRead,
+		fromPresentToTransferSrc,
+		fromTransferSrcToPresent
+	};
+
+	LayoutTransitionType getLayoutTransitionType(VkImageLayout from, VkImageLayout to)
+	{
+		if (from == VK_IMAGE_LAYOUT_UNDEFINED && to == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+			return LayoutTransitionType::toTransfer;
+		}
+		if (from == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && to == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		{
+			return LayoutTransitionType::fromTransferDstToShaderRead;
+		}
+		if (from == VK_IMAGE_LAYOUT_UNDEFINED && to == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+		{
+			return LayoutTransitionType::toDepthAttachment;
+		}
+		if (from == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && to == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+		{
+			return LayoutTransitionType::fromTransferSrcToPresent;
+		}
+		if (from == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR && to == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL)
+		{
+			return LayoutTransitionType::fromPresentToTransferSrc;
+		}
+
+		return LayoutTransitionType::invalid;
+	}
+
+	struct LayoutStages
+	{
+		VkAccessFlags sourceAccessMask;
+		VkAccessFlags destinationAccessMask;
+		VkPipelineStageFlagBits sourceStage;
+		VkPipelineStageFlagBits destinationStage;
+	};
+
+	LayoutStages layoutStagesForTransitionType(LayoutTransitionType transitionType)
+	{
+		constexpr VkAccessFlagBits none = (VkAccessFlagBits)0;
+
+		switch (transitionType)
+		{
+		case LayoutTransitionType::toTransfer:
+			return LayoutStages
+			{
+				.sourceAccessMask = none,
+				.destinationAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+				.sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				.destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT
+			};
+		case LayoutTransitionType::fromTransferDstToShaderRead:
+			return LayoutStages
+			{
+				.sourceAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+				.destinationAccessMask = VK_ACCESS_SHADER_READ_BIT,
+				.sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT,
+				.destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+			};
+		case LayoutTransitionType::toDepthAttachment:
+			return LayoutStages
+			{
+				.sourceAccessMask = none,
+				.destinationAccessMask = (VkAccessFlagBits)(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
+				.sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				.destinationStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+			};
+		case LayoutTransitionType::fromTransferSrcToPresent:
+			return LayoutStages
+			{
+				.sourceAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+				.destinationAccessMask = none,
+				.sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT,
+				.destinationStage = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT
+			};
+		case LayoutTransitionType::fromPresentToTransferSrc:
+			return LayoutStages
+			{
+				.sourceAccessMask = none,
+				.destinationAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+				.sourceStage = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT,
+				.destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT
+			};
+		default:
+			Logger::logError("Unsupported layout transition!");
+			assert(false);
+			return {};
+		}
+	}
+
+	void transitionImageLayout(const TransitionImageLayoutContext &context)
+	{
+		vkut::submitCommand(context.uploadContext, [&](VkCommandBuffer cmd)
+		{
+			const LayoutTransitionType transitionType = getLayoutTransitionType(context.fromLayout, context.toLayout);
+			const LayoutStages stages = layoutStagesForTransitionType(transitionType);
+
+			VkImageMemoryBarrier barrier
+			{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+				.srcAccessMask = stages.sourceAccessMask,
+				.dstAccessMask = stages.destinationAccessMask,
+				.oldLayout = context.fromLayout,
+				.newLayout = context.toLayout,
+				.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+				.image = context.image,
+				.subresourceRange =
+				{
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.baseMipLevel = 0,
+					.levelCount = context.mipLevels,
+					.baseArrayLayer = 0,
+					.layerCount = 1,
+				},
+			};
+
+			if (context.toLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+				barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+				if (hasStencilComponent(context.format)) {
+					barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+				}
+			}
+			else {
+				barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			}
+			
+			vkCmdPipelineBarrier(
+				cmd,
+				stages.sourceStage,
+				stages.destinationStage,
+				0,
+				0, nullptr,
+				0, nullptr,
+				1, &barrier
+			);
+		});
+
+	}
+
 	VkFramebuffer createRenderPassFramebuffer(const CreateRenderPassFramebufferInfo &info)
 	{
 		assert(info.colorViews.size() != 0);

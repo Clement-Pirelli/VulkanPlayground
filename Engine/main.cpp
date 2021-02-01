@@ -7,6 +7,9 @@
 #include <imgui/imgui_impl_glfw.h>
 #include <imgui/imgui_impl_vulkan.h>
 #include <Window.h>
+#include <BMPWriter.h>
+#include <string>
+#include <renderdoc/RenderDoc.h>
 
 constexpr const char *vertexShaderPath = "shader.vert.spv";
 constexpr const char *fragmentShaderPath = "shader.frag.spv";
@@ -18,6 +21,9 @@ ivec2 windowStartingResolution = { 1700 , 900 };
 vec2 lastCursorPos = { windowStartingResolution.x()/2.0f, windowStartingResolution.y()/2.0f};
 Directions directions{};
 bool cursorDisabled = true;
+
+RenderDoc doc;
+
 void mouseCallback(GLFWwindow *window, double xpos, double ypos)
 {
     const vec2 offset = 
@@ -37,7 +43,7 @@ void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods
     const bool pressing = (action == GLFW_PRESS || action == GLFW_REPEAT);
     switch (key)
     {
-    case GLFW_KEY_ESCAPE:
+    case GLFW_KEY_C:
     {
         if (action == GLFW_PRESS)
         {
@@ -70,6 +76,23 @@ void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods
     case GLFW_KEY_SPACE:
     {
         if(action == GLFW_PRESS) engine->settings.renderUI = !engine->settings.renderUI;
+    } break;
+    case GLFW_KEY_1:
+    {
+        if (action == GLFW_PRESS)
+        {
+            int x, y;
+            glfwGetWindowSize(window, &x, &y);
+            std::vector<std::byte> screenshot(x * y * 4U);
+
+            //doc.startCapture();
+            engine->drawToBuffer(Time::now(), camera, screenshot.data(), screenshot.size());
+            //doc.stopCapture();
+
+            std::string fileName = std::string("screenshot") + std::to_string(Time::now().asSeconds()) + ".bmp";
+            writeBMP(fileName.c_str(), x, y, reinterpret_cast<color *>(screenshot.data()));
+            Logger::logMessageFormatted("Took screenshot at path %s!", fileName.c_str());
+        }
     } break;
     }
 }
@@ -109,7 +132,7 @@ int main([[maybe_unused]]int argc, [[maybe_unused]]char *argv[])
             glfwPollEvents();
             const Time deltaTime = Time::now() - endTime;
             camera.handleMovement(deltaTime, directions);
-            engine.draw(deltaTime, camera);
+            engine.drawToScreen(deltaTime, camera);
             endTime = Time::now();
 
         } while (!window.shouldClose());

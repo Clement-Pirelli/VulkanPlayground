@@ -1,5 +1,7 @@
 #pragma once
-#include <array>
+#include <math.h>
+#include <cstddef>
+#include <utility>
 
 template<typename T, size_t N>
 struct vec
@@ -236,14 +238,15 @@ struct vec
 	static constexpr size_t size()
 	{
 		return N;
-	}
+	};
 
-	std::array<T, N> e = {};
+	T e[N] = {};
 };
 
 namespace std
 {
-	template<typename T, size_t N> struct hash<vec<T, N>>
+	template<typename T, size_t N>
+	struct hash<vec<T, N>>
 	{
 		size_t operator()(const vec<T, N> &v)
 		{

@@ -16,6 +16,9 @@
     <Filter Include="Resource Files\imgui">
       <UniqueIdentifier>{8bd04da9-51f2-4d7a-9768-c1c1d2db7b97}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Resource Files\renderdoc">
+      <UniqueIdentifier>{37df77b4-664d-4db7-a79d-8c1c36744074}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\Dependencies\include\Files.h">
@@ -78,6 +81,9 @@
     <ClInclude Include="Window.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\Dependencies\include\renderdoc\RenderDoc.h">
+      <Filter>Resource Files\renderdoc</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Dependencies\include\Logger\Logger.cpp">
@@ -136,6 +142,9 @@
     </ClCompile>
     <ClCompile Include="Window.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Dependencies\include\renderdoc\RenderDoc.cpp">
+      <Filter>Resource Files\renderdoc</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

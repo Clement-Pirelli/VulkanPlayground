@@ -156,6 +156,7 @@
     <ClInclude Include="..\Dependencies\include\imgui\imgui_impl_glfw.h" />
     <ClInclude Include="..\Dependencies\include\imgui\imgui_impl_vulkan.h" />
     <ClInclude Include="..\Dependencies\include\Logger\Logger.h" />
+    <ClInclude Include="..\Dependencies\include\renderdoc\RenderDoc.h" />
     <ClInclude Include="AttributeType.h" />
     <ClInclude Include="Camera.h" />
     <ClInclude Include="CommonConcepts.h" />
@@ -202,6 +203,7 @@
       <WarningLevel Condition="'$(Configuration)|$(Platform)'=='Release|x64'">TurnOffAllWarnings</WarningLevel>
     </ClCompile>
     <ClCompile Include="..\Dependencies\include\Logger\Logger.cpp" />
+    <ClCompile Include="..\Dependencies\include\renderdoc\RenderDoc.cpp" />
     <ClCompile Include="Camera.cpp" />
     <ClCompile Include="Image.cpp" />
     <ClCompile Include="Mesh.cpp" />

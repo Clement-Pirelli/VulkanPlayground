@@ -7,8 +7,6 @@ layout (location = 0) out vec4 outFragColor;
 
 layout(set = 0, binding = 1) uniform  SceneData
 {
-	 vec4 example1;
-	 vec4 example2;
 	 vec4 ambientColor;
 	 vec4 sunlightDirection; //w for sun power
 	 vec4 sunlightColor;

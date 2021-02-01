@@ -18,13 +18,6 @@ layout(set = 0, binding = 0) uniform  CameraBuffer
 	mat4 viewproj;
 } camera;
 
-
-layout( push_constant ) uniform Constants //unused at the moment
-{
-	vec4 data;
-	mat4 render_matrix;
-} constants;
-
 struct ObjectData
 {
 	mat4 model;

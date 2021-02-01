@@ -195,13 +195,6 @@ void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t object
             }
         }
 
-        const MeshPushConstants constants
-        {
-            .renderMatrix = object.transform
-        };
-
-        vkCmdPushConstants(cmd, object.material->pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(MeshPushConstants), &constants);
-
         //only bind the mesh if its a different one from last bind
         if (object.mesh != lastMesh) {
             const VkDeviceSize vertexBufferOffset = 0;
@@ -252,20 +245,20 @@ Engine::~Engine()
     }
 }
 
-void Engine::draw(Time deltaTime, const Camera& camera)
+void Engine::drawToScreen(Time deltaTime, const Camera& camera)
 {
     if(settings.renderUI) ImGui::Render();
+
+    FrameData &frame = currentFrame();
     constexpr bool waitAll = true;
     constexpr uint64_t bigTimeout = 1000000000;
-    FrameData &frame = currentFrame();
 
     VK_CHECK(vkWaitForFences(device, 1, &frame.renderFence, waitAll, bigTimeout));
     VK_CHECK(vkResetFences(device, 1, &frame.renderFence));
 
     //note we give presentSemaphore to the swapchain, it'll be signaled when the swapchain is ready to give the next image
-    uint32_t swapchainImageIndex;
     do {
-        const VkResult result = vkAcquireNextImageKHR(device, swapchainInfo.swapchain, bigTimeout, frame.presentSemaphore, nullptr, &swapchainImageIndex);
+        const VkResult result = vkAcquireNextImageKHR(device, swapchainInfo.swapchain, bigTimeout, frame.presentSemaphore, nullptr, &swapchainInfo.lastAcquiredImageIndex);
         if (result == VK_ERROR_OUT_OF_DATE_KHR)
         {
             onResize();
@@ -340,7 +333,7 @@ void Engine::draw(Time deltaTime, const Camera& camera)
         {
             .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
             .renderPass = renderPass,
-            .framebuffer = framebuffers[swapchainImageIndex],
+            .framebuffer = framebuffers[swapchainInfo.lastAcquiredImageIndex],
             .renderArea
             {
                 .offset = {.x = 0, .y = 0},
@@ -385,7 +378,7 @@ void Engine::draw(Time deltaTime, const Camera& camera)
         .pWaitSemaphores = &frame.renderSemaphore, //wait on rendering to be done before we present
         .swapchainCount = 1,
         .pSwapchains = &swapchainInfo.swapchain,
-        .pImageIndices = &swapchainImageIndex
+        .pImageIndices = &swapchainInfo.lastAcquiredImageIndex
     };
 
     //check whether we need to resize
@@ -404,6 +397,76 @@ void Engine::draw(Time deltaTime, const Camera& camera)
 
 
     frameCount++;
+}
+
+void Engine::drawToBuffer(Time deltaTime, const Camera &camera, std::byte *data, size_t count)
+{
+    const size_t imageSize = windowExtent.height * windowExtent.width * 4U;
+    assert(data != nullptr && count >= imageSize);
+
+
+
+    {
+        VkFence frameFence = currentFrame().renderFence;
+        drawToScreen(deltaTime, camera);
+        VK_CHECK(vkWaitForFences(device, 1, &frameFence, true, 1000000000)); //wait until the rendering is done
+        vkDeviceWaitIdle(device);
+    }
+    const VkImage imageToCopy = swapchainInfo.images[swapchainInfo.lastAcquiredImageIndex];
+
+    const vkut::UploadContext uploadContext = getUploadContext();
+
+    vkut::TransitionImageLayoutContext transitionContext
+    {
+        .uploadContext = uploadContext,
+        .image = imageToCopy,
+        .fromLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .toLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .format = swapchainInfo.format,
+        .mipLevels = 1
+    };
+    vkut::transitionImageLayout(transitionContext);
+
+    AllocatedBuffer stagingBuffer;
+    vkut::submitCommand(uploadContext, [&](VkCommandBuffer cmd) 
+    {
+        const VkBufferImageCopy imageCopyInfo
+        {
+            //buffer Offset, RowLength and ImageHeight are 0
+            .imageSubresource = 
+            {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel = 0,
+                .baseArrayLayer = 0,
+                .layerCount = 1
+            },
+            .imageOffset = { 0, 0, 0 },
+            .imageExtent = {
+                windowExtent.width,
+                windowExtent.height,
+                1
+            }
+        };
+
+        stagingBuffer = vkmem::createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, allocator, VMA_MEMORY_USAGE_GPU_TO_CPU);
+
+        vkCmdCopyImageToBuffer(
+            cmd,
+            imageToCopy,
+            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            stagingBuffer.buffer,
+            1,
+            &imageCopyInfo
+        );
+    });
+
+    transitionContext.fromLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    transitionContext.toLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    vkut::transitionImageLayout(transitionContext);
+
+    memcpy(vkmem::getMappedData(stagingBuffer), data, imageSize);
+
+    vkmem::destroyBuffer(allocator, stagingBuffer);
 }
 
 void Engine::initVulkan()
@@ -532,14 +595,7 @@ void Engine::initImgui()
     };
     ImGui_ImplVulkan_Init(&initInfo, renderPass);
 
-    const vkut::UploadContext uploadContext
-    {
-        .device = device,
-        .uploadFence = uploadFence,
-        .commandPool = uploadCommandPool,
-        .queue = graphicsQueue
-    };
-    vkut::submitCommand(uploadContext, [](VkCommandBuffer cmd)
+    vkut::submitCommand(getUploadContext(), [](VkCommandBuffer cmd)
         {
             ImGui_ImplVulkan_CreateFontsTexture(cmd); //upload fonts
         });
@@ -682,24 +738,18 @@ MaterialHandle Engine::loadMaterial(const char *vertexModuleName, const char *fr
     const std::optional<VkShaderModule> fragmentModule = vkut::createShaderModule(device, fragmentModulePath.c_str());
     if (!vertexModule.has_value())
     {
-        Logger::logErrorFormatted("Could not load vertex module at path \"%s\"", vertexModulePath);
+        Logger::logErrorFormatted("Could not load vertex module at path \"%s\"", vertexModulePath.c_str());
         return MaterialHandle::invalidHandle();
     }
 
     if (!fragmentModule.has_value())
     {
-        Logger::logErrorFormatted("Could not load fragment module at path: \"%s\"", fragmentModulePath);
+        Logger::logErrorFormatted("Could not load fragment module at path: \"%s\"", fragmentModulePath.c_str());
         vkut::destroyShaderModule(device, vertexModule.value());
         return MaterialHandle::invalidHandle();
     }
 
-    const VkPushConstantRange meshConstants
-    {
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-        .offset = 0,
-        .size = sizeof(MeshPushConstants),
-    };
-    const VkPipelineLayout pipelineLayout = vkut::createPipelineLayout(device, { globalSetLayout, objectsSetLayout, singleTextureSetLayout }, { meshConstants });
+    const VkPipelineLayout pipelineLayout = vkut::createPipelineLayout(device, { globalSetLayout, objectsSetLayout, singleTextureSetLayout }, {});
     QUEUE_DESTROY(vkut::destroyPipelineLayout(device, pipelineLayout));
 
     const std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages = {
@@ -1110,18 +1160,23 @@ void Engine::addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 tr
     }
 }
 
+vkut::UploadContext Engine::getUploadContext() const
+{
+    return vkut::UploadContext
+    {
+        .device = device,
+        .uploadFence = uploadFence,
+        .commandPool = uploadCommandPool,
+        .queue = graphicsQueue
+    };
+}
+
 void Engine::uploadMesh(Mesh &mesh)
 {
     const VmaMemoryUsage vmaStagingBufferUsage = VMA_MEMORY_USAGE_CPU_ONLY; //on CPU RAM
     const VmaMemoryUsage vmaBuffersUsage = VMA_MEMORY_USAGE_GPU_ONLY;
     
-    const vkut::UploadContext uploadContext
-    {
-        .device = device,
-        .uploadFence = uploadFence,
-        .commandPool = uploadCommandPool,
-        .queue = graphicsQueue,
-    };
+    const vkut::UploadContext uploadContext = getUploadContext();
 
     //vertex buffer
     {

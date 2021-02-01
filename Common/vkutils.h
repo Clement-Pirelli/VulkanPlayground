@@ -59,22 +59,8 @@ namespace details
 	}															  												\
 }
 
-namespace vkut {
-
-	//structs
-	struct Image
-	{
-		VkImage image;
-		VkDeviceMemory memory;
-	};
-
-	struct Buffer
-	{
-		VkBuffer buffer;
-		VkDeviceMemory memory;
-		VkDeviceSize size;
-	};
-
+namespace vkut 
+{
 	[[nodiscard]]
 	VkImageView createImageView(VkDevice device, VkImage image, VkFormat format, VkImageAspectFlags aspectFlags, uint32_t mipLevels);
 	void destroyImageView(VkDevice device, VkImageView view);
@@ -105,6 +91,7 @@ namespace vkut {
 	void destroyPipelineLayout(VkDevice device, VkPipelineLayout pipelineLayout);
 
 	VkSampleCountFlagBits getMaxImageSamples(VkPhysicalDevice physicalDevice);
+
 	VkFormat findDepthFormat(VkPhysicalDevice physicalDevice);
 
 	bool hasStencilComponent(VkFormat format);
@@ -203,6 +190,17 @@ namespace vkut {
 		//this will free the command buffer too
 		vkResetCommandPool(device, context.commandPool, 0);
 	}
+	
+	struct TransitionImageLayoutContext
+	{
+		UploadContext uploadContext;
+		VkImage image;
+		VkImageLayout fromLayout;
+		VkImageLayout toLayout; 
+		VkFormat format;
+		uint32_t mipLevels;
+	};
+	void transitionImageLayout(const TransitionImageLayoutContext &context);
 }
 
 #endif
