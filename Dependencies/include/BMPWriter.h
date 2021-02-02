@@ -58,7 +58,7 @@ private:
 
 #pragma pack(pop)
 
-void writeBMP(const char *path, uint32_t xPixelCount, uint32_t yPixelCount, color *contents)
+void writeBMP(const char *path, uint32_t xPixelCount, uint32_t yPixelCount, color *contents, bool invertedY = false)
 {
 	uint32_t headerSize = sizeof(BMPFileHeader) + sizeof(BMPInfoHeader) + sizeof(BMPColorHeader);
 	uint32_t contentsSize = xPixelCount * yPixelCount * sizeof(color);
@@ -78,7 +78,7 @@ void writeBMP(const char *path, uint32_t xPixelCount, uint32_t yPixelCount, colo
 	header.fileHeader.offset_data = headerSize;
 	header.infoHeader.bit_count = sizeof(color) * 8;
 	header.infoHeader.width = xPixelCount;
-	header.infoHeader.height = yPixelCount;
+	header.infoHeader.height = invertedY ? -(int32_t)yPixelCount : (int32_t)yPixelCount;
 	header.infoHeader.size = sizeof(BMPInfoHeader);
 
 	std::ofstream file(path, std::ios::binary);

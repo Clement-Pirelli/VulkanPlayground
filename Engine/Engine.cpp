@@ -453,18 +453,14 @@ void Engine::drawToBuffer(Time deltaTime, const Camera &camera, std::byte *data,
         vkCmdCopyImageToBuffer(
             cmd,
             imageToCopy,
-            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             stagingBuffer.buffer,
             1,
             &imageCopyInfo
         );
     });
 
-    transitionContext.fromLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    transitionContext.toLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    vkut::transitionImageLayout(transitionContext);
-
-    memcpy(vkmem::getMappedData(stagingBuffer), data, imageSize);
+    memcpy(data, vkmem::getMappedData(stagingBuffer), imageSize);
 
     vkmem::destroyBuffer(allocator, stagingBuffer);
 }

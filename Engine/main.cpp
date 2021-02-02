@@ -90,7 +90,7 @@ void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods
             //doc.stopCapture();
 
             std::string fileName = std::string("screenshot") + std::to_string(Time::now().asSeconds()) + ".bmp";
-            writeBMP(fileName.c_str(), x, y, reinterpret_cast<color *>(screenshot.data()));
+            writeBMP(fileName.c_str(), x, y, reinterpret_cast<color *>(screenshot.data()), true);
             Logger::logMessageFormatted("Took screenshot at path %s!", fileName.c_str());
         }
     } break;
