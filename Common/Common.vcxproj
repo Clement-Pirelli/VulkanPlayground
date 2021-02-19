@@ -160,10 +160,12 @@
     <ClInclude Include="AttributeType.h" />
     <ClInclude Include="Camera.h" />
     <ClInclude Include="CommonConcepts.h" />
+    <ClInclude Include="ConsoleVariables.h" />
     <ClInclude Include="Image.h" />
     <ClInclude Include="MathUtils.h" />
     <ClInclude Include="Mesh.h" />
     <ClInclude Include="OFileSerialization.h" />
+    <ClInclude Include="ResourceMap.h" />
     <ClInclude Include="Timer.h" />
     <ClInclude Include="TypesafeHandle.h" />
     <ClInclude Include="VkBootstrap.h" />

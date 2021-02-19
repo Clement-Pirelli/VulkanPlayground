@@ -84,6 +84,12 @@
     <ClInclude Include="..\Dependencies\include\renderdoc\RenderDoc.h">
       <Filter>Resource Files\renderdoc</Filter>
     </ClInclude>
+    <ClInclude Include="ConsoleVariables.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ResourceMap.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\Dependencies\include\Logger\Logger.cpp">
