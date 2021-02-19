@@ -45,10 +45,10 @@ public:
 		return length;
 	}
 
-	void read(char *dataToFill, size_t size)
+	void read(std::byte *dataToFill, size_t size)
 	{
 		assert(dataToFill != nullptr && open);
-		stream.read(dataToFill, size);
+		stream.read((char*)dataToFill, size);
 	}
 
 	template<details::Fillable T>
@@ -57,7 +57,7 @@ public:
 		assert(open);
 		T result{};
 		result.resize(calculateLength());
-		read(result.data(), result.size());
+		read((std::byte*)result.data(), result.size());
 		return result;
 	}
 

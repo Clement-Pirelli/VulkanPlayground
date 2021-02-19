@@ -160,7 +160,7 @@ OFile::FileData processObj(const ObjAttribute &attrib, const std::vector<ObjShap
 	}
 	else
 	{
-		std::vector<uint8_t> vertexData = std::vector<uint8_t>(vertices.size() * sizeof(ObjVertex));
+		std::vector<std::byte> vertexData = std::vector<std::byte>(vertices.size() * sizeof(ObjVertex));
 		StreamOut stream(vertexData.data(), vertexData.size());
 		for (auto &vertex : vertices)
 		{

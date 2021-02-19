@@ -13,7 +13,7 @@ public:
 	{
 		std::vector<AttributeType> attributes = {};
 		size_t vertexAmount = {};
-		std::vector<uint8_t> vertices = {};
+		std::vector<std::byte> vertices = {};
 		std::vector<uint32_t> indices = {};
 	};
 
@@ -29,7 +29,7 @@ public:
 	size_t vertexSize() const;
 
 	[[nodiscard]]
-	const std::vector<uint8_t> &vertices() const { return fileData.vertices; };
+	const std::vector<std::byte> &vertices() const { return fileData.vertices; };
 	[[nodiscard]]
 	const std::vector<uint32_t> &indices() const { return fileData.indices; };
 	

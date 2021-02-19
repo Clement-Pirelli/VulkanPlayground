@@ -22,12 +22,4 @@
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
-  <ItemGroup>
-    <None Include="..\raw_assets\shaders\shader.frag">
-      <Filter>Shaders</Filter>
-    </None>
-    <None Include="..\raw_assets\shaders\shader.vert">
-      <Filter>Shaders</Filter>
-    </None>
-  </ItemGroup>
 </Project>

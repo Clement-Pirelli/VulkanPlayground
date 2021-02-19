@@ -6,7 +6,7 @@ class StreamIn
 {
 public:
 
-	StreamIn(uint8_t *givenData, size_t givenMaxSize) :data(givenData), maxSize(givenMaxSize) {}
+	StreamIn(std::byte *givenData, size_t givenMaxSize) :data(givenData), maxSize(givenMaxSize) {}
 
 	
 	template<typename T>
@@ -38,19 +38,19 @@ public:
 		return deserialize<T>(address, maxSize - at);
 	}
 
-	size_t bytesWritten() const noexcept { return at; }
+	size_t bytesRead() const noexcept { return at; }
 
 private:
 
 	template<typename T>
-	static T deserialize(uint8_t *data, [[maybe_unused]] size_t size) noexcept
+	static T deserialize(std::byte *data, [[maybe_unused]] size_t size) noexcept
 	{
 		assert(size >= sizeof(T));
 
 		return *(reinterpret_cast<T *>(data));
 	}
 
-	uint8_t *data = nullptr;
+	std::byte *data = nullptr;
 	size_t at = 0U;
 	size_t maxSize = 0U;
 };
@@ -60,12 +60,12 @@ class StreamOut
 {
 public:
 
-	StreamOut(uint8_t *givenData, size_t givenMaxSize) : data(givenData), maxSize(givenMaxSize) {}
+	StreamOut(std::byte *givenData, size_t givenMaxSize) : data(givenData), maxSize(givenMaxSize) {}
 
 	template<typename T>
 	void setNext(const T &item) noexcept
 	{
-		uint8_t *address = data + at;
+		std::byte *address = data + at;
 		at += sizeof(T);
 		memcpy(address, &item, sizeof(T));
 	}
@@ -74,13 +74,13 @@ public:
 	void setNext(T *items, size_t amount) noexcept
 	{
 		assert(items != nullptr);
-		uint8_t *address = data + at;
+		std::byte* address = data + at;
 		at += sizeof(T) * amount;
 		memcpy(address, items, sizeof(T) * amount);
 	}
 
 	[[nodiscard]]
-	uint8_t *getData() const noexcept
+	std::byte *getData() const noexcept
 	{
 		return data;
 	}
@@ -89,7 +89,47 @@ public:
 	size_t bytesWritten() const noexcept { return at; }
 
 private:
-	uint8_t *data = nullptr;
+	std::byte *data = nullptr;
 	size_t at = 0U;
 	size_t maxSize = 0U;
+};
+
+#include <vector>
+class StretchyStreamOut
+{
+public:
+
+	StretchyStreamOut(size_t expectedSize = 0) : data(expectedSize) {}
+
+	template<typename T>
+	void setNext(const T &item) noexcept
+	{
+		const size_t at = data.size();
+		const size_t size = sizeof(T);
+		data.resize(data.size()+size);
+		memcpy(data.data()+at, &item, size);
+	}
+
+	template<typename T>
+	void setNext(T *items, size_t amount) noexcept
+	{
+		assert(items != nullptr);
+		const size_t at = data.size();
+		const size_t size = sizeof(T) * amount;
+		data.resize(data.size() + size);
+		memcpy(data.data(), items, size);
+	}
+
+	[[nodiscard]]
+	const std::byte *getData() const noexcept
+	{
+		return data.data();
+	}
+
+	[[nodiscard]]
+	size_t bytesWritten() const noexcept { return data.size(); }
+
+private:
+
+	std::vector<std::byte> data;
 };
