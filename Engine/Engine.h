@@ -7,6 +7,8 @@
 #include <vec.h>
 #include <Timer.h>
 #include <TypesafeHandle.h>
+#include <ResourceMap.h>
+#include <ConsoleVariables.h>
 
 #include <deque>
 #include <functional>
@@ -97,7 +99,6 @@ struct FrameData
 	VkDescriptorSet objectsDescriptor;
 };
 
- 
 constexpr uint32_t overlappingFrameNumber = 2;
 
 class Engine
@@ -120,17 +121,16 @@ public:
 	
 	void addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform, vec4 color);
 	
+	void getNextImage(VkSemaphore waitSemaphore);
+	void startRecording(VkCommandBuffer cmd, VkFence waitFence);
+	void endRecording(FrameData &frame);
 	void drawToScreen(Time deltaTime, const Camera& camera);
+	void present(VkSemaphore waitSemaphore);
 	void drawToBuffer(Time deltaTime, const Camera& camera, std::byte* data, size_t count);
 	void drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t count, const Camera& camera);
 
 	Engine(Window& window);
 	~Engine();
-
-	struct
-	{
-		bool renderUI = true;
-	} settings;
 
 private:
 
@@ -148,7 +148,7 @@ private:
 	void initDescriptors();
 	void initSamplers();
 
-	void onResize();
+	void onWindowResize();
 
 	bool initialized = false;
 	size_t frameCount{};
@@ -172,7 +172,6 @@ private:
 	VkExtent2D windowExtent{};
 
 	VkRenderPass renderPass{};
-
 	std::vector<VkFramebuffer> framebuffers;
 
 	VkImageView depthImageView{};
@@ -194,9 +193,9 @@ private:
 	DeletionQueue mainDeletionQueue{};
 
 	std::vector<RenderObject> renderables;
-	std::unordered_map<MaterialHandle, Material> materials;
-	std::unordered_map<MeshHandle, Mesh> meshes; 
-	std::unordered_map<TextureHandle, Texture> textures;
+	ResourceMap<MaterialHandle, Material> materials;
+	ResourceMap<MeshHandle, Mesh> meshes;
+	ResourceMap<TextureHandle, Texture> textures;
 	//todo: make this an unordered map of samplers, create as they're asked
 	VkSampler blockySampler;
 

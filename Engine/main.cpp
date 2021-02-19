@@ -6,10 +6,12 @@
 #include <Camera.h>
 #include <imgui/imgui_impl_glfw.h>
 #include <imgui/imgui_impl_vulkan.h>
-#include <Window.h>
 #include <BMPWriter.h>
-#include <string>
+#include <ConsoleVariables.h>
+
 #include <renderdoc/RenderDoc.h>
+#include <Window.h>
+#include <string>
 
 constexpr const char *vertexShaderPath = "shader.vert.spv";
 constexpr const char *fragmentShaderPath = "shader.frag.spv";
@@ -21,8 +23,35 @@ ivec2 windowStartingResolution = { 1700 , 900 };
 vec2 lastCursorPos = { windowStartingResolution.x()/2.0f, windowStartingResolution.y()/2.0f};
 Directions directions{};
 bool cursorDisabled = true;
+bool showConsoleVariables = false;
 
 RenderDoc doc;
+
+ConsoleVariable<float> cameraSpeed("cameraSpeed", .1f);
+ConsoleVariable<bool> renderUI("renderUI", true);
+
+void takeScreenshot(GLFWwindow* window, Engine& engine)
+{
+    int x, y;
+    glfwGetWindowSize(window, &x, &y);
+    const size_t screenBytes = x * (unsigned int)y * 4U;
+    std::vector<std::byte> screenshot(screenBytes);
+
+    engine.drawToBuffer(Time::now(), camera, screenshot.data(), screenshot.size());
+
+    const std::string fileName = std::string("screenshot") + std::to_string(Time::now().asSeconds()) + ".bmp"; //todo: use date instead
+    const bmp::writeInfo writeInfo
+    {
+        .path = fileName.c_str(),
+        .xPixelCount = (uint32_t)x,
+        .yPixelCount = (uint32_t)y,
+        .contents = reinterpret_cast<bmp::color *>(screenshot.data()),
+        .invertedY = true
+    };
+    bmp::write(writeInfo);
+
+    Logger::logMessageFormatted("Took screenshot at path %s!", fileName.c_str());
+}
 
 void mouseCallback(GLFWwindow *window, double xpos, double ypos)
 {
@@ -39,13 +68,20 @@ void mouseCallback(GLFWwindow *window, double xpos, double ypos)
 //todo: clean this up
 void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 {
+    if (ImGui::GetIO().WantCaptureKeyboard)
+    {
+        return;
+    }
+
     Engine *engine = reinterpret_cast<Engine*>(glfwGetWindowUserPointer(window));
-    const bool pressing = (action == GLFW_PRESS || action == GLFW_REPEAT);
+    const bool pressed = action == GLFW_PRESS;
+    const bool held = (action == GLFW_PRESS || action == GLFW_REPEAT);
+    const bool released = action == GLFW_RELEASE;
     switch (key)
     {
     case GLFW_KEY_C:
     {
-        if (action == GLFW_PRESS)
+        if (pressed)
         {
             cursorDisabled = !cursorDisabled;
             if (cursorDisabled)
@@ -56,44 +92,64 @@ void keyCallback(GLFWwindow *window, int key, int scancode, int action, int mods
     } break;
     case GLFW_KEY_S:
     {
-        directions.backwards = pressing;
+        directions.backwards = held;
     } break;
 
     case GLFW_KEY_A:
     {
-        directions.left = pressing;
+        directions.left = held;
     } break;
 
     case GLFW_KEY_W:
     { 
-        directions.forwards = pressing;
+        directions.forwards = held;
     } break;
 
     case GLFW_KEY_D:
     {
-        directions.right = pressing;
+        directions.right = held;
     } break;
     case GLFW_KEY_SPACE:
     {
-        if(action == GLFW_PRESS) engine->settings.renderUI = !engine->settings.renderUI;
+        if(pressed) renderUI.set(!renderUI.get());
     } break;
     case GLFW_KEY_1:
     {
-        if (action == GLFW_PRESS)
-        {
-            int x, y;
-            glfwGetWindowSize(window, &x, &y);
-            std::vector<std::byte> screenshot(x * y * 4U);
-
-            //doc.startCapture();
-            engine->drawToBuffer(Time::now(), camera, screenshot.data(), screenshot.size());
-            //doc.stopCapture();
-
-            std::string fileName = std::string("screenshot") + std::to_string(Time::now().asSeconds()) + ".bmp";
-            writeBMP(fileName.c_str(), x, y, reinterpret_cast<color *>(screenshot.data()), true);
-            Logger::logMessageFormatted("Took screenshot at path %s!", fileName.c_str());
-        }
+        if (pressed && engine != nullptr) takeScreenshot(window, *engine);
     } break;
+    case GLFW_KEY_TAB:
+    {
+        if (pressed) showConsoleVariables = !showConsoleVariables;
+    } break;
+    }
+}
+
+void UI()
+{
+    if (showConsoleVariables)
+    {
+        if(ImGui::Begin("Console variables"))
+        {
+            ConsoleVariables<int>::forEach([](const std::string &name, int &value)
+            {
+                ImGui::InputInt(name.c_str(), &value);
+            });
+
+            ImGui::Separator();
+
+            ConsoleVariables<float>::forEach([](const std::string &name, float &value)
+            {
+                ImGui::InputFloat(name.c_str(), &value);
+            });
+
+            ImGui::Separator();
+
+            ConsoleVariables<bool>::forEach([](const std::string &name, bool &value)
+            {
+                ImGui::Checkbox(name.c_str(), &value);
+            });
+        }
+        ImGui::End();
     }
 }
 
@@ -102,9 +158,14 @@ int main([[maybe_unused]]int argc, [[maybe_unused]]char *argv[])
     glfwInit();
     {
         Window window = Window(windowStartingResolution, "Engine");
+        window.setCursorCallback(mouseCallback);
+        window.setKeyCallback(keyCallback);
+        window.setCursorMode(CursorMode::disabled);
+
         Logger::setVerbosity(Logger::Verbosity::TRIVIAL);
 
         camera = Camera(vec3(.0f, 1.0f, .0f), vec3(.0f, .0f, -1.0f), vec3(.0f, 1.0f, .0f));
+
         Engine engine = Engine(window);
 
         const MeshHandle mesh = engine.loadMesh(meshPath);
@@ -113,26 +174,26 @@ int main([[maybe_unused]]int argc, [[maybe_unused]]char *argv[])
 
         engine.addRenderObject(mesh, material, mat4x4::identity(), vec4(1.0f, 1.0f, 1.0f, 1.0f));
 
-        window.setCursorCallback(mouseCallback);
-        window.setKeyCallback(keyCallback);
-        window.setCursorMode(CursorMode::disabled);
         window.setUserData(&engine);
 
         Time endTime = Time::now();
         do
         {
-            if (engine.settings.renderUI)
+            const Time deltaTime = Time::now() - endTime;
+            glfwPollEvents();
+
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+            if(renderUI.get())
             {
-                ImGui_ImplVulkan_NewFrame();
-                ImGui_ImplGlfw_NewFrame();
-                ImGui::NewFrame();
-                ImGui::ShowDemoWindow();
+                UI();
+                camera.speed = cameraSpeed.get();
             }
 
-            glfwPollEvents();
-            const Time deltaTime = Time::now() - endTime;
             camera.handleMovement(deltaTime, directions);
             engine.drawToScreen(deltaTime, camera);
+
             endTime = Time::now();
 
         } while (!window.shouldClose());

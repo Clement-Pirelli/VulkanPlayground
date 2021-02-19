@@ -74,13 +74,26 @@ namespace
             }
         };
     }
+
+    constexpr std::array<VkClearValue, 2> clearValues
+    {
+        VkClearValue
+        {
+            .color = { { 0.0f, 0.0f, 0.0f, 1.0f } }
+        },
+        VkClearValue
+        {
+            .depthStencil = {.depth = 1.0f }
+        }
+    };
 }
 
 MaterialHandle Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layout, TextureHandle textureHandle)
 {   
     VkDescriptorSet materialSet{ VK_NULL_HANDLE };
 
-    if(textureHandle != TextureHandle::invalidHandle())
+    if(Texture* texture = textures.get(textureHandle); 
+        texture != nullptr)
     {
         const VkDescriptorSetAllocateInfo allocInfo
         {
@@ -95,7 +108,7 @@ MaterialHandle Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layo
         VkDescriptorImageInfo imageBufferInfo
         {
             .sampler = blockySampler,
-            .imageView = textures[textureHandle].imageView,
+            .imageView = texture->imageView,
             .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
         };
 
@@ -105,38 +118,35 @@ MaterialHandle Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layo
     }
 
     const MaterialHandle newHandle = MaterialHandle::getNextHandle();
-    materials[newHandle] = Material
-    {
-        .textureSet = materialSet,
-        .pipeline = pipeline,
-        .pipelineLayout = layout,
-    };
+    materials.add(newHandle, 
+        Material
+        {
+            .textureSet = materialSet,
+            .pipeline = pipeline,
+            .pipelineLayout = layout,
+        });
     
     return newHandle;
 }
 
 Material *Engine::getMaterial(MaterialHandle handle)
 {
-    if (auto it = materials.find(handle);
-        it != materials.end()) 
+    Material *const material = materials.get(handle);
+    if (material == nullptr)
     {
-        return &(*it).second;
+        Logger::logErrorFormatted("Could not find material for handle %u", static_cast<uint64_t>(handle));
     }
-    else {
-        return nullptr;
-    }
+    return material;
 }
 
 Mesh *Engine::getMesh(MeshHandle handle)
 {
-    if (auto it = meshes.find(handle);
-        it != meshes.end())
+    Mesh * const mesh = meshes.get(handle);
+    if (mesh == nullptr)
     {
-        return &(*it).second;
+        Logger::logErrorFormatted("Could not find mesh for handle %u", static_cast<uint64_t>(handle));
     }
-    else {
-        return nullptr;
-    }
+    return mesh;
 }
 
 void Engine::drawObjects(VkCommandBuffer cmd, RenderObject *first, size_t objectCount, const Camera& camera)
@@ -213,6 +223,7 @@ Engine::Engine(Window& givenWindow) : window(givenWindow)
     windowExtent = { .width = (uint32_t)windowSize.x(), .height = (uint32_t)windowSize.y() };
 
     initVulkan();
+    initSamplers();
 
     auto swapChainResult = createSwapchainInfo(physicalDevice, device, surface);
     if (swapChainResult.has_value())
@@ -227,7 +238,6 @@ Engine::Engine(Window& givenWindow) : window(givenWindow)
     initFramebuffers();
     initSyncPrimitives();
     initDescriptors();
-    initSamplers();
     initImgui();
     Logger::logMessage("Successfully initialized vulkan resources!");
 
@@ -245,23 +255,16 @@ Engine::~Engine()
     }
 }
 
-void Engine::drawToScreen(Time deltaTime, const Camera& camera)
+void Engine::getNextImage(VkSemaphore waitSemaphore)
 {
-    if(settings.renderUI) ImGui::Render();
-
-    FrameData &frame = currentFrame();
     constexpr bool waitAll = true;
     constexpr uint64_t bigTimeout = 1000000000;
-
-    VK_CHECK(vkWaitForFences(device, 1, &frame.renderFence, waitAll, bigTimeout));
-    VK_CHECK(vkResetFences(device, 1, &frame.renderFence));
-
     //note we give presentSemaphore to the swapchain, it'll be signaled when the swapchain is ready to give the next image
     do {
-        const VkResult result = vkAcquireNextImageKHR(device, swapchainInfo.swapchain, bigTimeout, frame.presentSemaphore, nullptr, &swapchainInfo.lastAcquiredImageIndex);
+        const VkResult result = vkAcquireNextImageKHR(device, swapchainInfo.swapchain, bigTimeout, waitSemaphore, nullptr, &swapchainInfo.lastAcquiredImageIndex);
         if (result == VK_ERROR_OUT_OF_DATE_KHR)
         {
-            onResize();
+            onWindowResize();
             continue; //try again
         }
         if (result != VK_SUBOPTIMAL_KHR)
@@ -269,10 +272,19 @@ void Engine::drawToScreen(Time deltaTime, const Camera& camera)
             VK_CHECK(result);
         }
     } while (false);
+}
 
+void Engine::startRecording(VkCommandBuffer cmd, VkFence waitFence)
+{
+    FrameData &frame = currentFrame();
+    constexpr bool waitAll = true;
+    constexpr uint64_t bigTimeout = 1000000000;
+
+    VK_CHECK(vkWaitForFences(device, 1, &waitFence, waitAll, bigTimeout));
+    VK_CHECK(vkResetFences(device, 1, &waitFence));
 
     //begin recording the command buffer after resetting it safely (it isn't being used anymore since we acquired the next image)
-    VK_CHECK(vkResetCommandBuffer(frame.mainCommandBuffer, 0));
+    VK_CHECK(vkResetCommandBuffer(cmd, 0));
 
     VkCommandBufferBeginInfo commandBufferBeginInfo
     {
@@ -280,82 +292,17 @@ void Engine::drawToScreen(Time deltaTime, const Camera& camera)
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT, //we rerecord every frame, so this is a one time submit
     };
 
-    VK_CHECK(vkBeginCommandBuffer(frame.mainCommandBuffer, &commandBufferBeginInfo));
-    {
-        const VkViewport viewport
-        {
-            .x = .0f,
-            .y = .0f,
-            .width = static_cast<float>(windowExtent.width),
-            .height = static_cast<float>(windowExtent.height),
-            .minDepth = .0f,
-            .maxDepth = 1.0f
-        };
+    VK_CHECK(vkBeginCommandBuffer(cmd, &commandBufferBeginInfo));
 
-        const VkRect2D scissor
-        {
-            .offset = {0,0},
-            .extent = windowExtent
-        };
+    ImGui::Render();
+}
 
-        vkCmdSetViewport(frame.mainCommandBuffer, 0, 1, &viewport);
-        vkCmdSetScissor(frame.mainCommandBuffer, 0, 1, &scissor);
-        
-
-        const float flash = (float)abs(sin(frameCount / 120.f));
-        const float framed = (frameCount / 120.f);
-
-        sceneParameters.ambientColor = { sin(framed),0,cos(framed),1 };
-
-        const vkmem::UploadInfo<GPUSceneData> sceneUploadInfo
-        {
-            .data = &sceneParameters,
-            .buffer = globalBuffer,
-            .offset = sceneDataOffset(currentFrameIndex())
-        };
-        vkmem::uploadToBuffer(sceneUploadInfo);
-
-        const std::array<VkClearValue, 2> clearValues
-        {
-            VkClearValue
-            {
-                .color = { { 0.0f, 0.0f, flash, 1.0f } }
-            },
-            VkClearValue
-            {
-                .depthStencil = {.depth = 1.0f }
-            }
-        };
-
-
-        //We will use the clear color from above, and the framebuffer of the index the swapchain gave us
-        const VkRenderPassBeginInfo renderPassBeginInfo
-        {
-            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-            .renderPass = renderPass,
-            .framebuffer = framebuffers[swapchainInfo.lastAcquiredImageIndex],
-            .renderArea
-            {
-                .offset = {.x = 0, .y = 0},
-                .extent = windowExtent
-            },
-            .clearValueCount = static_cast<uint32_t>(clearValues.size()),
-            .pClearValues = clearValues.data(),
-
-        };
-
-        vkCmdBeginRenderPass(frame.mainCommandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
-        {
-            drawObjects(frame.mainCommandBuffer, renderables.data(), renderables.size(), camera);
-            if(settings.renderUI) ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), frame.mainCommandBuffer);
-        }
-        vkCmdEndRenderPass(frame.mainCommandBuffer);
-    }
+void Engine::endRecording(FrameData& frame)
+{
     VK_CHECK(vkEndCommandBuffer(frame.mainCommandBuffer));
-    
 
     const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    const VkSubmitInfo submit 
+    const VkSubmitInfo submit
     {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,
@@ -370,12 +317,80 @@ void Engine::drawToScreen(Time deltaTime, const Camera& camera)
     //commands will be executed, renderFence will block until the commands on the graphicsQueue finish execution
     VK_CHECK(vkQueueSubmit(graphicsQueue, 1, &submit, frame.renderFence));
 
+    present(frame.renderSemaphore);
+}
 
-    VkPresentInfoKHR presentInfo 
+void Engine::drawToScreen(Time deltaTime, const Camera& camera)
+{
+    FrameData &frame = currentFrame();
+    getNextImage(frame.presentSemaphore);
+    startRecording(frame.mainCommandBuffer, frame.renderFence);
+    
+    {
+        const VkViewport cmdViewport
+        {
+            .x = .0f,
+            .y = .0f,
+            .width = static_cast<float>(windowExtent.width),
+            .height = static_cast<float>(windowExtent.height),
+            .minDepth = .0f,
+            .maxDepth = 1.0f
+        };
+
+        const VkRect2D cmdScissor
+        {
+            .offset = {0,0},
+            .extent = windowExtent
+        };
+
+        vkCmdSetViewport(frame.mainCommandBuffer, 0, 1, &cmdViewport);
+        vkCmdSetScissor(frame.mainCommandBuffer, 0, 1, &cmdScissor);
+
+        const float framed = (frameCount / 120.f);
+        sceneParameters.ambientColor = { sin(framed),0,cos(framed),1 };
+
+        const vkmem::UploadInfo<GPUSceneData> sceneUploadInfo
+        {
+            .data = &sceneParameters,
+            .buffer = globalBuffer,
+            .offset = sceneDataOffset(currentFrameIndex())
+        };
+        vkmem::uploadToBuffer(sceneUploadInfo);
+
+        const VkRenderPassBeginInfo renderPassBeginInfo
+        {
+            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .renderPass = renderPass,
+            .framebuffer = framebuffers[swapchainInfo.lastAcquiredImageIndex],
+            .renderArea
+            {
+                .offset = {.x = 0, .y = 0},
+                .extent = windowExtent
+            },
+            .clearValueCount = static_cast<uint32_t>(clearValues.size()),
+            .pClearValues = clearValues.data(),
+        };
+
+        vkCmdBeginRenderPass(frame.mainCommandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+        {
+            drawObjects(frame.mainCommandBuffer, renderables.data(), renderables.size(), camera);
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), frame.mainCommandBuffer);
+        }
+        vkCmdEndRenderPass(frame.mainCommandBuffer);
+    }
+
+    endRecording(frame);
+
+    frameCount++;
+}
+
+void Engine::present(VkSemaphore waitSemaphore)
+{
+    VkPresentInfoKHR presentInfo
     {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &frame.renderSemaphore, //wait on rendering to be done before we present
+        .pWaitSemaphores = &waitSemaphore, //wait on rendering to be done before we present
         .swapchainCount = 1,
         .pSwapchains = &swapchainInfo.swapchain,
         .pImageIndices = &swapchainInfo.lastAcquiredImageIndex
@@ -385,26 +400,21 @@ void Engine::drawToScreen(Time deltaTime, const Camera& camera)
     const VkResult presentResult = vkQueuePresentKHR(graphicsQueue, &presentInfo);
     const ivec2 swapchainExtents{ (int)swapchainInfo.extent.width, (int)swapchainInfo.extent.height };
     if (presentResult == VK_ERROR_OUT_OF_DATE_KHR
-        || presentResult == VK_SUBOPTIMAL_KHR 
+        || presentResult == VK_SUBOPTIMAL_KHR
         || window.resolution() != swapchainExtents)
     {
-        onResize();
+        onWindowResize();
     }
     else
     {
         VK_CHECK(presentResult);
     }
-
-
-    frameCount++;
 }
 
 void Engine::drawToBuffer(Time deltaTime, const Camera &camera, std::byte *data, size_t count)
 {
     const size_t imageSize = windowExtent.height * windowExtent.width * 4U;
     assert(data != nullptr && count >= imageSize);
-
-
 
     {
         VkFence frameFence = currentFrame().renderFence;
@@ -726,8 +736,14 @@ void Engine::initSyncPrimitives()
     QUEUE_DESTROY(vkDestroyFence(device, uploadFence, nullptr));
 }
 
-MaterialHandle Engine::loadMaterial(const char *vertexModuleName, const char *fragmentModuleName, MeshHandle vertexDescriptionMesh, TextureHandle textureHandle)
+MaterialHandle Engine::loadMaterial(const char *vertexModuleName, const char *fragmentModuleName, MeshHandle vertexDescriptionMeshHandle, TextureHandle textureHandle)
 {
+    const Mesh * const vertexMesh = getMesh(vertexDescriptionMeshHandle);
+    if(vertexMesh == nullptr)
+    {
+        return MaterialHandle::invalidHandle();
+    }
+
     const std::string vertexModulePath = getShaderPath(vertexModuleName);
     const std::string fragmentModulePath = getShaderPath(fragmentModuleName);
     const std::optional<VkShaderModule> vertexModule = vkut::createShaderModule(device, vertexModulePath.c_str());
@@ -752,7 +768,7 @@ MaterialHandle Engine::loadMaterial(const char *vertexModuleName, const char *fr
         vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_VERTEX_BIT, vertexModule.value()),
         vkinit::pipelineShaderStageCreateInfo(VK_SHADER_STAGE_FRAGMENT_BIT, fragmentModule.value())
     };
-    const VertexInputDescription vertexInputDescription = meshes[vertexDescriptionMesh].getDescription();
+    const VertexInputDescription vertexInputDescription = vertexMesh->getDescription();
     const VkPipelineVertexInputStateCreateInfo vertexInputStateCreateInfo
     {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -818,7 +834,6 @@ MaterialHandle Engine::loadMaterial(const char *vertexModuleName, const char *fr
         .subpass = 0,
     };
 
-    //its easy to error out on create graphics pipeline, so we handle it a bit better than the common VK_CHECK case
     VkPipeline pipeline;
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline));
     QUEUE_DESTROY(vkDestroyPipeline(device, pipeline, nullptr));
@@ -833,12 +848,7 @@ MaterialHandle Engine::loadMaterial(const char *vertexModuleName, const char *fr
 
 void Engine::initDepthResources(bool recreating)
 {
-    const VkExtent3D depthImageExtent 
-    {
-        windowExtent.width,
-        windowExtent.height,
-        1
-    };
+    const VkExtent3D depthImageExtent = {windowExtent.width, windowExtent.height, 1 };
 
     depthFormat = VK_FORMAT_D32_SFLOAT;
 
@@ -861,7 +871,6 @@ void Engine::initDepthResources(bool recreating)
         QUEUE_DESTROY_REF(vkmem::destroyImage(allocator, depthImage));
         QUEUE_DESTROY_REF(vkDestroyImageView(device, depthImageView, nullptr));
     }
-
 }
 
 void Engine::initDescriptors()
@@ -1042,25 +1051,25 @@ void Engine::initSamplers()
     QUEUE_DESTROY(vkDestroySampler(device, blockySampler, nullptr));
 }
 
-void Engine::onResize()
+void Engine::onWindowResize()
 {
     vkDeviceWaitIdle(device);
+
+    vkmem::destroyImage(allocator, depthImage);
+    vkDestroyImageView(device, depthImageView, nullptr);
 
     for (uint32_t i = 0; i < swapchainInfo.images.size(); i++) {
         vkut::destroyFramebuffer(device, framebuffers[i]);
         vkut::destroyImageView(device, swapchainInfo.imageViews[i]);
-    }    
-    vkmem::destroyImage(allocator, depthImage);
-    vkDestroyImageView(device, depthImageView, nullptr);
+    }
 
     VkSwapchainKHR oldSwapchain = swapchainInfo.swapchain;
-
     auto swapChainResult = createSwapchainInfo(physicalDevice, device, surface, oldSwapchain); //"moves" the old swapchain
     if (swapChainResult.has_value())
     {
         swapchainInfo = swapChainResult.value();
     }
-    vkDestroySwapchainKHR(device, oldSwapchain, nullptr); 
+    vkDestroySwapchainKHR(device, oldSwapchain, nullptr);
 
     windowExtent = swapchainInfo.extent;
 
@@ -1068,6 +1077,7 @@ void Engine::onResize()
     initDepthResources(recreating);
     initFramebuffers(recreating);
 }
+
 
 MeshHandle Engine::loadMesh(const char *name)
 {
@@ -1081,8 +1091,8 @@ MeshHandle Engine::loadMesh(const char *name)
 
     const MeshHandle handle = MeshHandle::getNextHandle();
 
-    meshes[handle] = loadResult.value();
-    uploadMesh(meshes[handle]);
+    meshes.add(handle, loadResult.value());
+    uploadMesh(*meshes.get(handle));
     Logger::logMessageFormatted("Successfully loaded mesh at path \"%s\"!", path.c_str());
     return handle;
 }
@@ -1110,32 +1120,29 @@ TextureHandle Engine::loadTexture(const char *name)
     QUEUE_DESTROY(vkut::destroyImageView(device, view));
 
     TextureHandle handle = TextureHandle::getNextHandle();
-
-    const Texture result = { image.value(), view };
-    textures[handle] = result;
+    textures.add(handle, image.value(), view);
     Logger::logMessageFormatted("Successfully loaded texture at path \"%s\"!", path.c_str());
     return handle;
 }
 
-void Engine::addRenderObject(MeshHandle mesh, MaterialHandle material, mat4x4 transform, vec4 color)
+void Engine::addRenderObject(MeshHandle meshHandle, MaterialHandle materialHandle, mat4x4 transform, vec4 color)
 {
-    auto meshIt = meshes.find(mesh);
-    if(meshIt == meshes.end())
+    Mesh *mesh = getMesh(meshHandle);
+    if(mesh == nullptr)
     {
-        Logger::logErrorFormatted("Could not find mesh for handle %u", static_cast<uint64_t>(mesh));
         return;
     }
-    auto materialIt = materials.find(material);
-    if(materialIt == materials.end())
+
+    Material *material = getMaterial(materialHandle);
+    if(material == nullptr)
     {
-        Logger::logErrorFormatted("Could not find material for handle %u", static_cast<uint64_t>(material));
         return;
     }
 
     const RenderObject object = 
     {
-        .mesh = &(*meshIt).second,
-        .material = &(*materialIt).second,
+        .mesh = mesh,
+        .material = material,
         .transform = transform,
         .color = color
     };
