@@ -9,6 +9,7 @@
 #include <TypesafeHandle.h>
 #include <ResourceMap.h>
 #include <ConsoleVariables.h>
+#include <DescriptorSetBuilder.h>
 
 #include <deque>
 #include <functional>
@@ -177,6 +178,9 @@ private:
 	VkImageView depthImageView{};
 	AllocatedImage depthImage{};
 	VkFormat depthFormat{};
+
+	std::unique_ptr<vkut::DescriptorAllocator> descriptorAllocator;
+	std::unique_ptr<vkut::DescriptorLayoutCache> descriptorLayoutCache;
 
 	VkDescriptorSetLayout globalSetLayout{};
 	VkDescriptorSetLayout objectsSetLayout{};

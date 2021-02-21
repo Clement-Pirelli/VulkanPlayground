@@ -161,6 +161,7 @@
     <ClInclude Include="Camera.h" />
     <ClInclude Include="CommonConcepts.h" />
     <ClInclude Include="ConsoleVariables.h" />
+    <ClInclude Include="DescriptorSetBuilder.h" />
     <ClInclude Include="Image.h" />
     <ClInclude Include="MathUtils.h" />
     <ClInclude Include="Mesh.h" />
@@ -207,6 +208,7 @@
     <ClCompile Include="..\Dependencies\include\Logger\Logger.cpp" />
     <ClCompile Include="..\Dependencies\include\renderdoc\RenderDoc.cpp" />
     <ClCompile Include="Camera.cpp" />
+    <ClCompile Include="DescriptorSetBuilder.cpp" />
     <ClCompile Include="Image.cpp" />
     <ClCompile Include="Mesh.cpp" />
     <ClCompile Include="OFileSerialization.cpp" />

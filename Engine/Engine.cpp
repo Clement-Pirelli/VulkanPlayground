@@ -95,26 +95,32 @@ MaterialHandle Engine::createMaterial(VkPipeline pipeline, VkPipelineLayout layo
     if(Texture* texture = textures.get(textureHandle); 
         texture != nullptr)
     {
-        const VkDescriptorSetAllocateInfo allocInfo
-        {
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .descriptorPool = descriptorPool,
-            .descriptorSetCount = 1,
-            .pSetLayouts = &singleTextureSetLayout,
-        };
-        vkAllocateDescriptorSets(device, &allocInfo, &materialSet);
-
         //write to the descriptor set so that it points to our empire_diffuse texture
-        VkDescriptorImageInfo imageBufferInfo
+        const VkDescriptorImageInfo imageInfo
         {
             .sampler = blockySampler,
             .imageView = texture->imageView,
             .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
         };
+        const vkut::DescriptorBuilder::BindingInfo bindingInfo
+        {
+            .binding = 0,
+            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
+        };
 
-        const VkWriteDescriptorSet write = vkinit::writeDescriptorImage(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, materialSet, &imageBufferInfo, 0);
-
-        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        auto result = vkut::DescriptorBuilder(*descriptorLayoutCache, *descriptorAllocator)
+            .bindImage(imageInfo, bindingInfo)
+            .build(device);
+        
+        if (result.has_value()) 
+        {
+            materialSet = result.value().set;
+        } 
+        else 
+        {
+            Logger::logErrorFormatted("Couldn't build texture descriptor set for texture handle %u", textureHandle);
+        }
     }
 
     const MaterialHandle newHandle = MaterialHandle::getNextHandle();
@@ -875,100 +881,74 @@ void Engine::initDepthResources(bool recreating)
 
 void Engine::initDescriptors()
 {
-    
-    //global set layout
+    descriptorAllocator.reset(new vkut::DescriptorAllocator(device));
+    QUEUE_DESTROY(delete descriptorAllocator.get(); descriptorAllocator.release());
+    descriptorLayoutCache.reset(new vkut::DescriptorLayoutCache(device));
+    QUEUE_DESTROY(delete descriptorLayoutCache.get(); descriptorLayoutCache.release());
+
+    //texture set layout
     {
-        const VkDescriptorSetLayoutBinding cameraBufferBinding
+        VkDescriptorSetLayoutBinding textureBinding =
         {
             .binding = 0,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
             .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+            .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
         };
 
-        const VkDescriptorSetLayoutBinding sceneParamBufferBinding
+        const VkDescriptorSetLayoutCreateInfo createInfo
         {
-            .binding = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-            .descriptorCount = 1,
-            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+            .bindingCount = 1,
+            .pBindings = &textureBinding,
         };
-        globalSetLayout = vkut::createDescriptorSetLayout(device, { cameraBufferBinding, sceneParamBufferBinding });
-        QUEUE_DESTROY(vkut::destroyDescriptorSetLayout(device, globalSetLayout));
+
+        singleTextureSetLayout = descriptorLayoutCache->getLayout(createInfo);
     }
-
-    VkDescriptorSetLayoutBinding objectsBinding
-    {
-        .binding = 0,
-        .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-        .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
-    };
-
-    objectsSetLayout = vkut::createDescriptorSetLayout(device, { objectsBinding });
-    QUEUE_DESTROY(vkut::destroyDescriptorSetLayout(device, objectsSetLayout));
-
-    const uint32_t maxDescriptorSets = 10;  //this is an arbitrary big number for now
-    const std::vector<VkDescriptorPoolSize> sizes =
-    {
-        {
-            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 
-            .descriptorCount = maxDescriptorSets 
-        },
-        { 
-            .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 
-            .descriptorCount = maxDescriptorSets
-        },
-        {
-            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 
-            .descriptorCount = maxDescriptorSets
-        },
-        { 
-            .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 
-            .descriptorCount = 10 
-        }
-    };
-
-    const VkDescriptorPoolCreateInfo poolInfo
-    {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-        .maxSets = maxDescriptorSets * static_cast<uint32_t>(sizes.size()),
-        .poolSizeCount = static_cast<uint32_t>(sizes.size()),
-        .pPoolSizes = sizes.data()
-    };
-   
-    VK_CHECK(vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool));
-    QUEUE_DESTROY(vkDestroyDescriptorPool(device, descriptorPool, nullptr));
-
-    VkDescriptorSetLayoutBinding textureBinding =
-    {
-        .binding = 0,
-        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-        .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT
-    };
-
-    singleTextureSetLayout = vkut::createDescriptorSetLayout(device, { textureBinding });
-    QUEUE_DESTROY(vkut::destroyDescriptorSetLayout(device, singleTextureSetLayout));
 
     //global set allocations
     {
         const size_t globalBufferSize = cameraDataOffset(overlappingFrameNumber+1);
         globalBuffer = vkmem::createBuffer(globalBufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
         QUEUE_DESTROY(vkmem::destroyBuffer(allocator, globalBuffer));
-
-        const VkDescriptorSetAllocateInfo globalAllocationInfo
-        {
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .descriptorPool = descriptorPool,
-            .descriptorSetCount = 1,
-            .pSetLayouts = &globalSetLayout
-        };
-
-        VK_CHECK(vkAllocateDescriptorSets(device, &globalAllocationInfo, &globalDescriptorSet));
-        QUEUE_DESTROY(vkFreeDescriptorSets(device, descriptorPool, 1, &globalDescriptorSet));
     }
+
+
+    const VkDescriptorBufferInfo cameraBufferInfo
+    {
+        .buffer = globalBuffer.buffer,
+        .offset = 0, //even though we are offsetting into this buffer, it's done dynamically
+        .range = sizeof(GPUCameraData)
+    };
+    const vkut::DescriptorBuilder::BindingInfo cameraBufferBindingInfo
+    {
+        .binding = 0,
+        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+    };
+
+    const VkDescriptorBufferInfo sceneBufferInfo
+    {
+        .buffer = globalBuffer.buffer,
+        .offset = 0, //even though we are offsetting into this buffer, it's done dynamically
+        .range = sizeof(GPUSceneData)
+    };
+
+    const vkut::DescriptorBuilder::BindingInfo sceneBufferBindingInfo
+    {
+        .binding = 1,
+        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
+    };
+
+    auto globalSetResult = vkut::DescriptorBuilder(*descriptorLayoutCache, *descriptorAllocator)
+        .bindBuffer(cameraBufferInfo, cameraBufferBindingInfo)
+        .bindBuffer(sceneBufferInfo, sceneBufferBindingInfo)
+        .build(device);
+
+    assert(globalSetResult.has_value());
+    globalSetLayout = globalSetResult.value().layout;
+    globalDescriptorSet = globalSetResult.value().set;
 
     for (uint32_t i = 0; i < overlappingFrameNumber; i++)
     {
@@ -978,49 +958,7 @@ void Engine::initDescriptors()
         {
             currentFrame.objectsBuffer = vkmem::createBuffer(sizeof(GPUObjectData) * maxObjects, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, allocator, VMA_MEMORY_USAGE_CPU_TO_GPU);
             QUEUE_DESTROY(vkmem::destroyBuffer(allocator, currentFrame.objectsBuffer));
-            const VkDescriptorSetAllocateInfo objectsAllocationInfo
-            {
-                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-                .descriptorPool = descriptorPool,
-                .descriptorSetCount = 1,
-                .pSetLayouts = &objectsSetLayout
-            };
-
-            vkAllocateDescriptorSets(device, &objectsAllocationInfo, &currentFrame.objectsDescriptor);
-            QUEUE_DESTROY(vkFreeDescriptorSets(device, descriptorPool, 1, &currentFrame.objectsDescriptor));
         }
-
-        const VkDescriptorBufferInfo cameraBufferInfo
-        {
-            .buffer = globalBuffer.buffer,
-            .offset = 0, //even though we are offsetting into this buffer, it's done dynamically
-            .range = sizeof(GPUCameraData)
-        };
-        const VkWriteDescriptorSet cameraWrite
-        {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = globalDescriptorSet,
-            .dstBinding = 0,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-            .pBufferInfo = &cameraBufferInfo
-        };
-
-        const VkDescriptorBufferInfo sceneInfo
-        {
-            .buffer = globalBuffer.buffer,
-            .offset = 0, //even though we are offsetting into this buffer, it's done dynamically
-            .range = sizeof(GPUSceneData)
-        };
-        const VkWriteDescriptorSet sceneWrite
-        {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = globalDescriptorSet,
-            .dstBinding = 1,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-            .pBufferInfo = &sceneInfo
-        };
 
         const VkDescriptorBufferInfo objectBufferInfo
         {
@@ -1028,19 +966,20 @@ void Engine::initDescriptors()
             .offset = 0,
             .range = sizeof(GPUObjectData) * maxObjects
         };
-        const VkWriteDescriptorSet objectWrite
+        const vkut::DescriptorBuilder::BindingInfo cameraBufferBindingInfo
         {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .dstSet = currentFrame.objectsDescriptor,
-            .dstBinding = 0,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-            .pBufferInfo = &objectBufferInfo
+            .binding = 0,
+            .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            .stageFlags = VK_SHADER_STAGE_VERTEX_BIT
         };
 
-        std::array<VkWriteDescriptorSet, 3> setWrites = { cameraWrite, sceneWrite, objectWrite };
+        auto objectSetResult = vkut::DescriptorBuilder(*descriptorLayoutCache, *descriptorAllocator)
+            .bindBuffer(objectBufferInfo, cameraBufferBindingInfo)
+            .build(device);
 
-        vkUpdateDescriptorSets(device, static_cast<uint32_t>(setWrites.size()), setWrites.data(), 0, nullptr); //here we update both the global and the objects descriptor sets at once - this is normal
+        assert(objectSetResult.has_value());
+        objectsSetLayout = objectSetResult.value().layout;
+        currentFrame.objectsDescriptor = objectSetResult.value().set;
     }
 }
 
